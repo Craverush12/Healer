@@ -1,0 +1,103 @@
+{
+  "categories": [
+    {
+      "id": "welcome",
+      "title": "Welcome / Setup / Updates",
+      "type": "text",
+      "content": "HOW TO USE\n\nThis app includes several different tools you can use to achieve Peace Of Mind.\n\n• Daily guided meditations: we suggest you do these twice per day. Once in the morning after you wake up, and once in the evening, usually before dinner time is best.\n\n• Sleep meditations: you can play these on your phone to help you relax and have a peaceful deep sleep.\n\n• Nature sounds and music: as you become more advanced in meditation, you may find you prefer to meditate without a guide. These nature sounds and relaxing music are good options so you can get in the meditative state without anything to distract you. You can also use this relaxing music while relaxing any time during the day, such as driving a car, working on your computer, or any other situation.\n\n• Mindset Tracks: these help you to change your perspective and help you cultivate more of a masculine mindset. You can listen to these any time of the day. This is to be done ON TOP of the daily meditations, not as a replacement.\n\nTECHNICAL SETUP\n\n• Phone on airplane mode: We suggest you download all of the tracks while you have internet connection, then when you're using the app you can have your phone on Airplane mode. This is so you reduce the amount of radiation coming from your phone. This is especially important for sleeping.\n\n• Turn off notifications in Telegram\n\nSUPPORT\n\nIf you get stuck / membership questions, send an email: support@oscarvore.com",
+      "recommended": true
+    },
+    {
+      "id": "daily-meditations",
+      "title": "Daily Guided Meditations",
+      "description": "Core meditation practice - do twice per day (morning + evening)",
+      "usageInstructions": "Best time: Morning after waking up, and evening before dinner",
+      "recommended": true
+    },
+    {
+      "id": "sleep-meditations",
+      "title": "Sleep Meditations",
+      "description": "To help you have a deep and peaceful sleep",
+      "usageInstructions": "Play before bed to relax and fall asleep peacefully"
+    },
+    {
+      "id": "noise-nature",
+      "title": "Noise & Nature",
+      "description": "Background sounds for meditation without guide, focusing, and sleep",
+      "usageInstructions": "Use to meditate without a guide. Also effective for focusing and sleep."
+    },
+    {
+      "id": "focus-music",
+      "title": "Focus Music",
+      "description": "Music for focus and concentration",
+      "usageInstructions": "Play while working, studying, or any time you need to focus"
+    },
+    {
+      "id": "quick-options",
+      "title": "1-5 Minute Options",
+      "description": "Quick meditation options for when you're short on time",
+      "usageInstructions": "Coming soon - quick meditations for busy schedules"
+    },
+    {
+      "id": "mewing-meditation",
+      "title": "Mewing Meditation",
+      "description": "Specialized meditation practice",
+      "usageInstructions": "Coming soon"
+    },
+    {
+      "id": "masculine-mindset",
+      "title": "Masculine Mindset",
+      "description": "Educational content to change perspective and cultivate mindset",
+      "usageInstructions": "Listen any time of day. This is supplementary to daily meditations, not a replacement."
+    }
+  ],
+  "items": [
+    {
+      "id": "meditation-15min",
+      "title": "15 Minutes",
+      "categoryId": "daily-meditations",
+      "filePath": "DAILY_GUIDED_MEDITATIONS/Meditation_15_Minutes.mp3",
+      "description": "The best guided meditation to start and even useful for experienced meditators. Teaches core techniques to get out of your head, while explaining the practice of meditation. Start here. You can just do this same meditation for 6+ months.",
+      "duration": "15 min",
+      "recommended": true,
+      "whenToUse": ["morning", "evening"],
+      "difficulty": "beginner"
+    },
+    {
+      "id": "meditation-20min",
+      "title": "20 Minutes",
+      "categoryId": "daily-meditations",
+      "filePath": "DAILY_GUIDED_MEDITATIONS/20_Min_Meditation_for_Mindfulness.mp3",
+      "description": "This meditation teaches some different techniques to get into the meditative state. You can use vary between this one and the previous guided meditation for the first months of your meditative journey.",
+      "duration": "20 min",
+      "whenToUse": ["morning", "evening"],
+      "difficulty": "intermediate"
+    },
+    {
+      "id": "sleep-15min",
+      "title": "15 Minutes",
+      "categoryId": "sleep-meditations",
+      "filePath": "SLEEP_MEDITATION/15_Min_Guided_Meditation_for_Falling_Asleep.mp3",
+      "description": "Guided meditation specifically designed to help you fall asleep",
+      "duration": "15 min",
+      "whenToUse": ["sleep"]
+    },
+    {
+      "id": "thunder-sounds",
+      "title": "Thunder Sounds",
+      "categoryId": "noise-nature",
+      "filePath": "NOISE_AND_NATURE/Soundscape_8_Hours.mp3",
+      "description": "8-hour thunder soundscape for meditation, focus, or sleep",
+      "duration": "8 hours",
+      "whenToUse": ["anytime", "sleep", "focus"]
+    },
+    {
+      "id": "alima-frequency",
+      "title": "Alima Frequency",
+      "categoryId": "focus-music",
+      "filePath": "FOCUS_MUSIC/alima_frequency.mp3",
+      "description": "Frequency-based music for deep focus",
+      "whenToUse": ["focus", "meditation"]
+    }
+  ]
+}
