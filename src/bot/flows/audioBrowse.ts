@@ -188,7 +188,8 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
       const fileIdToUse = cachedFileId ?? manifestFileId;
 
       if (fileIdToUse) {
-        await ctx.sendChatAction("upload_audio");
+        // Typings omit "upload_audio"; use upload_document to show upload activity
+        await ctx.sendChatAction("upload_document");
         try {
           await ctx.replyWithAudio(fileIdToUse, { title: item.title, caption });
         } catch (err: any) {
@@ -227,7 +228,8 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
           logger.warn({ err: statErr, itemId, filePath: item.filePath }, "Failed to stat audio file");
         }
 
-        await ctx.sendChatAction("upload_audio");
+        // Typings omit "upload_audio"; use upload_document to show upload activity
+        await ctx.sendChatAction("upload_document");
         await ctx.replyWithAudio({ source: fs.createReadStream(filePath) }, { title: item.title, caption });
       } catch (err: any) {
         logger.error({ err, itemId, filePath: item.filePath }, "Failed to send audio file");
