@@ -27,21 +27,8 @@ async function main() {
 
   // Telegram bot
   const bot = createBot({ env, db, audio });
-  
-  try {
-    await bot.launch();
-    logger.info("Telegram bot launched");
-  } catch (err: any) {
-    logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
-    logger.error("Possible causes:");
-    logger.error("1. Invalid BOT_TOKEN - check your .env file");
-    logger.error("2. Network connectivity issues - check your internet connection");
-    logger.error("3. Firewall blocking Telegram API - check firewall settings");
-    logger.error("4. Telegram API temporarily unavailable - try again in a few minutes");
-    process.exit(1);
-  }
 
-  // Express app (webhooks + health). Bot wiring will be added next.
+  // Express app (webhooks + health). Start this first so hosting platforms detect the port promptly.
   const app = express();
 
   app.get("/healthz", (_req, res) => {
@@ -81,10 +68,24 @@ async function main() {
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+  // Launch bot after HTTP server is listening so container port is bound even if Telegram hangs.
+  (async () => {
+    try {
+      await bot.launch();
+      logger.info("Telegram bot launched");
+    } catch (err: any) {
+      logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
+      logger.error("Possible causes:");
+      logger.error("1. Invalid BOT_TOKEN - check your .env file");
+      logger.error("2. Network connectivity issues - check your internet connection");
+      logger.error("3. Firewall blocking Telegram API - check firewall settings");
+      logger.error("4. Telegram API temporarily unavailable - try again in a few minutes");
+    }
+  })();
 }
 
 main().catch((err) => {
   logger.fatal({ err }, "Fatal error");
   process.exit(1);
 });
-
