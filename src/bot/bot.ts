@@ -146,6 +146,41 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     await ctx.reply(["Missing cached file_ids:", ...missing.map((id) => `- ${id}`)].join("\n"));
   });
 
+  bot.command("admin_file_ids", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    const lines: string[] = [];
+    for (const item of audio.manifest.items) {
+      if (item.type && item.type !== "audio") continue;
+      const cached = getTelegramAudioFileId(db, item.id);
+      const manifestFileId = item.telegramFileId;
+      const chosen = cached ?? manifestFileId;
+      lines.push(
+        [
+          `${item.id}:`,
+          chosen ? `using=${chosen}` : "MISSING",
+          manifestFileId ? `manifest=${manifestFileId}` : null,
+          cached ? `db=${cached}` : null
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      );
+    }
+
+    if (lines.length === 0) {
+      await ctx.reply("No audio items found in manifest.");
+      return;
+    }
+
+    // Keep reply concise; Telegraf limit is generous but avoid overlong messages.
+    await ctx.reply(lines.join("\n"));
+  });
+
   bot.hears(MENU_LABELS.help, async (ctx) => {
     await ctx.reply(renderHelpText());
   });
