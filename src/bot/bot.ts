@@ -98,6 +98,10 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
       await ctx.reply("Already cached for this item.");
       return;
     }
+    if (item.telegramFileId) {
+      await ctx.reply("Already has telegramFileId in manifest. Use that in production or clear it before re-ingesting.");
+      return;
+    }
 
     const fullPath = resolveAudioFilePath(item.filePath);
     await ctx.reply(`Uploading: ${item.title}`);
@@ -109,7 +113,14 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     }
 
     upsertTelegramAudioFileId(db, itemId, telegramFileId);
-    await ctx.reply(`Cached file_id for ${itemId}.`);
+    await ctx.reply(
+      [
+        `Cached file_id for ${itemId}.`,
+        "",
+        "Copy this into audio/manifest.json to avoid needing a persistent DB in production:",
+        `"telegramFileId": "${telegramFileId}"`
+      ].join("\n")
+    );
   });
 
   bot.command("admin_missing_file_ids", async (ctx) => {
@@ -124,7 +135,8 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     for (const item of audio.manifest.items) {
       if (item.type && item.type !== "audio") continue;
       const cached = getTelegramAudioFileId(db, item.id);
-      if (!cached) missing.push(item.id);
+      const manifestFileId = item.telegramFileId;
+      if (!cached && !manifestFileId) missing.push(item.id);
     }
 
     if (missing.length === 0) {
@@ -267,4 +279,3 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
 
   return bot;
 }
-

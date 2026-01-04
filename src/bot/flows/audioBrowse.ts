@@ -10,8 +10,21 @@ import type { SqliteDb } from "../../db/db";
 import { getUser } from "../../db/usersRepo";
 import { logger } from "../../logger";
 
+const TELEGRAM_AUDIO_LIMIT_BYTES = 49 * 1024 * 1024; // Slightly under Telegram's 50MB cap for bots
+
 function hasAudioAccess(state: string | null | undefined): boolean {
   return state === "ACTIVE_SUBSCRIBER" || state === "CANCEL_PENDING";
+}
+
+async function safeAnswerCallback(ctx: Context) {
+  try {
+    await ctx.answerCbQuery();
+  } catch (err: any) {
+    // Telegram returns 400 when the button tap is too old or already answered; ignore it.
+    if (err?.response?.error_code !== 400) {
+      logger.warn({ err }, "Failed to answer callback query");
+    }
+  }
 }
 
 export async function showCategories(params: { ctx: Context; db: SqliteDb; audio: AudioLibrary }) {
@@ -46,7 +59,7 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
     const telegramUserId = ctx.from?.id;
     if (!telegramUserId) return;
 
-    await ctx.answerCbQuery();
+    await safeAnswerCallback(ctx);
 
     const user = getUser(db, telegramUserId);
     if (!user || !hasAudioAccess(user.state)) {
@@ -117,7 +130,7 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
   });
 
   bot.action("audio:back", async (ctx) => {
-    await ctx.answerCbQuery();
+    await safeAnswerCallback(ctx);
     await showCategories({ ctx, db, audio });
   });
 
@@ -125,7 +138,7 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
     const telegramUserId = ctx.from?.id;
     if (!telegramUserId) return;
 
-    await ctx.answerCbQuery();
+    await safeAnswerCallback(ctx);
 
     const user = getUser(db, telegramUserId);
     if (!user || !hasAudioAccess(user.state)) {
@@ -171,8 +184,21 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
       const caption = captionParts.length > 0 ? captionParts.join("\n") : undefined;
 
       const cachedFileId = getTelegramAudioFileId(db, item.id);
-      if (cachedFileId) {
-        await ctx.replyWithAudio(cachedFileId, { title: item.title, caption });
+      const manifestFileId = item.telegramFileId;
+      const fileIdToUse = cachedFileId ?? manifestFileId;
+
+      if (fileIdToUse) {
+        await ctx.sendChatAction("upload_audio");
+        try {
+          await ctx.replyWithAudio(fileIdToUse, { title: item.title, caption });
+        } catch (err: any) {
+          logger.error({ err, itemId, fileIdToUse }, "Failed to send audio by file_id");
+          if (err?.response?.error_code === 413) {
+            await ctx.reply(`"${item.title}" is too large for Telegram to send.`);
+          } else {
+            await ctx.reply(`Sorry, "${item.title}" is not available right now.`);
+          }
+        }
         return;
       }
 
@@ -181,12 +207,39 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
         return;
       }
 
+      let loadingMessage: any;
+      try {
+        loadingMessage = await ctx.reply("Loading audio…");
+      } catch (err: any) {
+        logger.warn({ err }, "Failed to send loading message");
+      }
+
       try {
         const filePath = resolveAudioFilePath(item.filePath);
+        try {
+          const stats = fs.statSync(filePath);
+          if (stats.size > TELEGRAM_AUDIO_LIMIT_BYTES) {
+            const sizeMb = Math.ceil(stats.size / (1024 * 1024));
+            await ctx.reply(`"${item.title}" is too large for Telegram (${sizeMb} MB).`);
+            return;
+          }
+        } catch (statErr: any) {
+          logger.warn({ err: statErr, itemId, filePath: item.filePath }, "Failed to stat audio file");
+        }
+
+        await ctx.sendChatAction("upload_audio");
         await ctx.replyWithAudio({ source: fs.createReadStream(filePath) }, { title: item.title, caption });
       } catch (err: any) {
         logger.error({ err, itemId, filePath: item.filePath }, "Failed to send audio file");
         await ctx.reply(`Sorry, "${item.title}" is not available right now.`);
+      } finally {
+        if (loadingMessage) {
+          try {
+            await ctx.deleteMessage(loadingMessage.message_id);
+          } catch (err: any) {
+            logger.warn({ err }, "Failed to delete loading message");
+          }
+        }
       }
       return;
     }
@@ -194,4 +247,3 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
     await ctx.reply(`Sorry, "${item.title}" is not available.`);
   });
 }
-

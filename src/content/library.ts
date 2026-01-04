@@ -18,6 +18,7 @@ const ItemSchema = z.object({
   categoryId: z.string().min(1),
   filePath: z.string().optional(), // Optional for external links
   url: z.string().url().optional(), // For external links (Spotify, etc.)
+  telegramFileId: z.string().optional(), // Optional: cached Telegram file_id, lets us avoid local files in production
   description: z.string().optional(),
   duration: z.string().optional(), // e.g., "15 min", "8 hours"
   recommended: z.boolean().optional(), // "Start Here" flag
@@ -68,8 +69,10 @@ export function loadAudioLibrary(manifestPath = path.join(process.cwd(), "audio"
     if (!categoriesById.has(item.categoryId)) {
       throw new Error(`Invalid audio manifest: item '${item.id}' references missing categoryId '${item.categoryId}'.`);
     }
-    if (item.type === "audio" && !item.filePath) {
-      throw new Error(`Invalid audio manifest: item '${item.id}' is type 'audio' but has no filePath.`);
+    if (item.type === "audio" && !item.filePath && !item.telegramFileId) {
+      throw new Error(
+        `Invalid audio manifest: item '${item.id}' is type 'audio' but has neither filePath nor telegramFileId.`
+      );
     }
     if (item.type === "external" && !item.url) {
       throw new Error(`Invalid audio manifest: item '${item.id}' is type 'external' but has no url.`);
@@ -78,4 +81,3 @@ export function loadAudioLibrary(manifestPath = path.join(process.cwd(), "audio"
 
   return { manifest, categoriesById, itemsById, itemsByCategoryId };
 }
-

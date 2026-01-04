@@ -19,6 +19,17 @@ To make audio play inline in Telegram without streaming from your server, cache 
 
 After ingest, the bot will prefer sending by `file_id` (fast + reliable) and fall back to disk streaming if missing.
 
+### No persistent storage? Bake `file_id`s into the manifest
+
+If your host does not give you a persistent disk (e.g., Render free tier), you can stay free by storing the `file_id` in `audio/manifest.json`:
+
+1) Run locally with the MP3 files present.
+2) In Telegram, run `/admin_ingest <itemId>`; the bot replies with the `telegramFileId` snippet.
+3) Add `"telegramFileId": "<value>"` to that item in `audio/manifest.json`.
+4) Commit and deploy; production will use the manifest value without needing a DB cache or local files.
+
+`/admin_missing_file_ids` now considers both the DB cache and `telegramFileId` in the manifest.
+
 ## Add audio
 
 1. Copy an MP3 into `audio/files/` (example: `sleep-meditation-01.mp3`)
