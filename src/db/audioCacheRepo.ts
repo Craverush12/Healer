@@ -20,3 +20,10 @@ export function upsertTelegramAudioFileId(db: DbLike, itemId: string, telegramFi
   ).run(itemId, telegramFileId, now);
 }
 
+export function deleteTelegramAudioFileId(db: DbLike, itemId: string) {
+  db.prepare("DELETE FROM telegram_audio_cache WHERE item_id = ?").run(itemId);
+}
+
+export function clearTelegramAudioFileIds(db: DbLike) {
+  db.prepare("DELETE FROM telegram_audio_cache").run();
+}

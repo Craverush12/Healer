@@ -4,7 +4,12 @@ import { Markup, Telegraf } from "telegraf";
 import type { AudioLibrary } from "../content/library";
 import { resolveAudioFilePath } from "../content/storage";
 import type { Env } from "../config/env";
-import { getTelegramAudioFileId, upsertTelegramAudioFileId } from "../db/audioCacheRepo";
+import {
+  clearTelegramAudioFileIds,
+  deleteTelegramAudioFileId,
+  getTelegramAudioFileId,
+  upsertTelegramAudioFileId
+} from "../db/audioCacheRepo";
 import type { SqliteDb } from "../db/db";
 import { getUser, upsertUserIfMissing } from "../db/usersRepo";
 import { logger } from "../logger";
@@ -179,6 +184,103 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
 
     // Keep reply concise; Telegraf limit is generous but avoid overlong messages.
     await ctx.reply(lines.join("\n"));
+  });
+
+  bot.command("admin_ingest_missing", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    const missing: string[] = [];
+    for (const item of audio.manifest.items) {
+      if (item.type && item.type !== "audio") continue;
+      const cached = getTelegramAudioFileId(db, item.id);
+      const manifestFileId = item.telegramFileId;
+      if (!cached && !manifestFileId) missing.push(item.id);
+    }
+
+    if (missing.length === 0) {
+      await ctx.reply("All audio items have cached Telegram file_ids.");
+      return;
+    }
+
+    await ctx.reply(`Ingesting ${missing.length} item(s)...`);
+
+    for (const itemId of missing) {
+      const item = audio.itemsById.get(itemId);
+      if (!item || item.type === "external") continue;
+      if (!item.filePath) {
+        await ctx.reply(`Skipping ${itemId} (no filePath).`);
+        continue;
+      }
+
+      try {
+        const fullPath = resolveAudioFilePath(item.filePath);
+        await ctx.reply(`Uploading: ${item.title}`);
+        const msg: any = await ctx.replyWithAudio({ source: fs.createReadStream(fullPath) }, { title: item.title });
+        const telegramFileId: string | undefined = msg?.audio?.file_id;
+        if (!telegramFileId) {
+          await ctx.reply(`Upload ok but could not extract file_id for ${itemId}.`);
+          continue;
+        }
+        upsertTelegramAudioFileId(db, itemId, telegramFileId);
+        await ctx.reply(`Cached file_id for ${itemId}: "telegramFileId": "${telegramFileId}"`);
+      } catch (err: any) {
+        logger.error({ err, itemId }, "Auto-ingest failed");
+        await ctx.reply(`Failed to ingest ${itemId}: ${err?.message ?? err}`);
+      }
+    }
+
+    await ctx.reply("Auto-ingest complete.");
+  });
+
+  bot.command("admin_export_manifest_ids", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    const lines: string[] = [];
+    lines.push("{");
+    for (const item of audio.manifest.items) {
+      if (item.type && item.type !== "audio") continue;
+      const cached = getTelegramAudioFileId(db, item.id);
+      const manifestFileId = item.telegramFileId;
+      const useId = cached ?? manifestFileId;
+      if (!useId) continue;
+      lines.push(`  "${item.id}": "${useId}",`);
+    }
+    lines.push("}");
+
+    await ctx.reply(["Paste these telegramFileId values into audio/manifest.json:", "```", ...lines, "```"].join("\n"));
+  });
+
+  bot.command("admin_clear_file_ids", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    // Optional: allow clearing a single item by id
+    const text = (ctx.message as any)?.text ?? "";
+    const parts = String(text).trim().split(/\s+/);
+    const itemId = parts[1];
+
+    if (itemId) {
+      deleteTelegramAudioFileId(db, itemId);
+      await ctx.reply(`Cleared cached file_id for ${itemId}.`);
+      return;
+    }
+
+    clearTelegramAudioFileIds(db);
+    await ctx.reply("Cleared all cached Telegram file_ids from DB. Re-ingest to populate with the current bot token.");
   });
 
   bot.hears(MENU_LABELS.help, async (ctx) => {
