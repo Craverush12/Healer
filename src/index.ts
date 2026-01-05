@@ -72,6 +72,9 @@ async function main() {
   // Launch bot after HTTP server is listening so container port is bound even if Telegram hangs.
   (async () => {
     try {
+      logger.info("Launching Telegram bot");
+      // Ensure we are in polling mode and not blocked by a lingering webhook.
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       await bot.launch();
       logger.info("Telegram bot launched");
     } catch (err: any) {
@@ -81,6 +84,8 @@ async function main() {
       logger.error("2. Network connectivity issues - check your internet connection");
       logger.error("3. Firewall blocking Telegram API - check firewall settings");
       logger.error("4. Telegram API temporarily unavailable - try again in a few minutes");
+      // Exit so the process restarts rather than staying silent.
+      process.exit(1);
     }
   })();
 }
