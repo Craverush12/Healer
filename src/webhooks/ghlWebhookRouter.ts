@@ -9,6 +9,7 @@ import { extractIdempotencyKey, sha256Hex } from "./idempotency";
 import { deriveNextState, normalizeWebhook } from "./eventHandlers";
 import { verifyHmacSha256Hex } from "./verifySignature";
 import { fetchTelegramUserIdByContactId } from "../ghl/contactLookup";
+import { consumeCheckoutToken } from "../db/checkoutTokenRepo";
 
 export function createGhlWebhookRouter(params: {
   env: Env;
@@ -74,6 +75,25 @@ export function createGhlWebhookRouter(params: {
 
     const normalized = normalizeWebhook(payload);
     let telegramUserId = normalized.telegramUserId;
+
+    // Token-based linking: if telegram_user_id is missing, try resolving a checkout token.
+    if (!telegramUserId) {
+      const tokenFromPayload =
+        payload?.token ??
+        payload?.checkoutToken ??
+        payload?.metadata?.token ??
+        payload?.metadata?.checkoutToken ??
+        null;
+      const tokenFromQuery = typeof req.query.token === "string" ? req.query.token : "";
+      const tokenToUse = typeof tokenFromPayload === "string" && tokenFromPayload.trim().length > 0 ? tokenFromPayload : tokenFromQuery;
+      if (tokenToUse) {
+        const resolved = consumeCheckoutToken(db, tokenToUse.trim());
+        if (resolved) {
+          telegramUserId = resolved;
+          normalized.telegramUserId = resolved;
+        }
+      }
+    }
 
     const eventInsert = tryInsertWebhookEvent({
       db,
@@ -166,4 +186,3 @@ export function createGhlWebhookRouter(params: {
 
   return router;
 }
-

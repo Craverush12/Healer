@@ -29,5 +29,13 @@ CREATE TABLE IF NOT EXISTS telegram_audio_cache (
   telegram_file_id TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
-`;
 
+-- One-time checkout tokens to map GHL webhooks back to Telegram users without exposing their id in URLs.
+CREATE TABLE IF NOT EXISTS checkout_tokens (
+  token TEXT PRIMARY KEY,
+  telegram_user_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  CONSTRAINT fk_checkout_tokens_user FOREIGN KEY (telegram_user_id) REFERENCES users (telegram_user_id) ON DELETE CASCADE
+);
+`;
