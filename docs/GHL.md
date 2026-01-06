@@ -37,7 +37,7 @@ Events:
 
 Preferred:
 - Configure webhook signing and set `GHL_WEBHOOK_SECRET`
-- Backend verifies `x-wh-signature` as `HMAC_SHA256(secret, raw_body)` hex
+- Backend verifies `x-wh-signature` as `HMAC_SHA256(secret, raw_body)` and accepts **either** lowercase hex or base64 encoding. If your tenant sends `x-wh-timestamp`, the backend enforces a ±5 minute tolerance.
 
 Fallback (if your tenant does not provide signature headers):
 - Set `WEBHOOK_TOKEN`

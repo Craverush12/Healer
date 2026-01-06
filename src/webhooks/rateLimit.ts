@@ -4,7 +4,7 @@ type Bucket = { count: number; resetAt: number };
 
 /**
  * Minimal in-memory fixed-window rate limiter.
- * MVP intent: protect /webhooks from accidental floods. Not intended for multi-instance deployments.
+ * MVP intent: protect /webhooks from accidental floods. Not intended for multi-instance deployments; use a shared store (e.g., Redis) if running more than one instance.
  */
 export function createIpRateLimiter(params: { windowMs: number; max: number }) {
   const { windowMs, max } = params;

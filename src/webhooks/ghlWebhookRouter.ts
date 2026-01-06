@@ -7,7 +7,7 @@ import { applyStateTransition, getUser, upsertUserIfMissing } from "../db/usersR
 import { logger } from "../logger";
 import { extractIdempotencyKey, sha256Hex } from "./idempotency";
 import { deriveNextState, normalizeWebhook } from "./eventHandlers";
-import { verifyHmacSha256Hex } from "./verifySignature";
+import { verifyHmacSha256 } from "./verifySignature";
 import { fetchTelegramUserIdByContactId } from "../ghl/contactLookup";
 import { consumeCheckoutToken } from "../db/checkoutTokenRepo";
 
@@ -32,13 +32,24 @@ export function createGhlWebhookRouter(params: {
     // Auth: prefer signature header if secret configured + header present; otherwise token query.
     // If payments are disabled, webhook auth is optional (for testing)
     const signatureHeader = String(req.header("x-wh-signature") ?? req.header("X-WH-SIGNATURE") ?? "").trim();
+    const signatureTimestamp = String(req.header("x-wh-timestamp") ?? req.header("X-WH-TIMESTAMP") ?? "").trim();
     const token = typeof req.query.token === "string" ? req.query.token : "";
 
     let authed = false;
     if (env.ENABLE_PAYMENTS) {
       // Payments enabled - require authentication
       if (env.GHL_WEBHOOK_SECRET && signatureHeader) {
-        authed = verifyHmacSha256Hex({ rawBody, secret: env.GHL_WEBHOOK_SECRET, headerSignature: signatureHeader });
+        const sig = verifyHmacSha256({
+          rawBody,
+          secret: env.GHL_WEBHOOK_SECRET,
+          headerSignature: signatureHeader,
+          headerTimestamp: signatureTimestamp || undefined,
+          maxSkewMs: 5 * 60 * 1000 // 5 minutes tolerance if timestamp present
+        });
+        authed = sig.valid;
+        if (!sig.valid) {
+          logger.warn({ reason: sig.reason }, "Webhook signature verification failed");
+        }
       } else if (env.WEBHOOK_TOKEN && token) {
         authed = token === env.WEBHOOK_TOKEN;
       } else if (env.WEBHOOK_TOKEN && !signatureHeader) {

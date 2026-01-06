@@ -4,7 +4,7 @@
       "id": "welcome",
       "title": "Welcome / Setup / Updates",
       "type": "text",
-      "content": "HOW TO USE\n\nThis app includes several different tools you can use to achieve Peace Of Mind.\n\n• Daily guided meditations: we suggest you do these twice per day. Once in the morning after you wake up, and once in the evening, usually before dinner time is best.\n\n• Sleep meditations: you can play these on your phone to help you relax and have a peaceful deep sleep.\n\n• Nature sounds and music: as you become more advanced in meditation, you may find you prefer to meditate without a guide. These nature sounds and relaxing music are good options so you can get in the meditative state without anything to distract you.\n\n• Mindset Tracks: these help you to change your perspective and help you cultivate more of a masculine mindset. You can listen to these any time of the day. This is to be done ON TOP of the daily meditations, not as a replacement.\n\nTECHNICAL SETUP\n\n• Phone on airplane mode: We suggest you download all of the tracks while you have internet connection, then when you're using the app you can have your phone on Airplane mode.\n\n• Turn off notifications in Telegram\n\nSUPPORT\n\nIf you get stuck / membership questions, send an email: support@oscarvore.com",
+      "content": "HOW TO USE\n\nThis app includes several different tools you can use to achieve Peace Of Mind.\n\n- Daily guided meditations: we suggest you do these twice per day. Once in the morning after you wake up, and once in the evening, usually before dinner time is best.\n\n- Sleep meditations: you can play these on your phone to help you relax and have a peaceful deep sleep.\n\n- Nature sounds and music: as you become more advanced in meditation, you may find you prefer to meditate without a guide. These nature sounds and relaxing music are good options so you can get in the meditative state without anything to distract you.\n\n- Mindset Tracks: these help you to change your perspective and help you cultivate more of a masculine mindset. You can listen to these any time of the day. This is to be done ON TOP of the daily meditations, not as a replacement.\n\nTECHNICAL SETUP\n\n- Phone on airplane mode: We suggest you download all of the tracks while you have internet connection, then when you're using the app you can have your phone on Airplane mode.\n\n- Turn off notifications in Telegram\n\nSUPPORT\n\nIf you get stuck / membership questions, send an email: support@oscarvore.com",
       "recommended": true
     },
     {
@@ -110,7 +110,7 @@
     },
     {
       "id": "stoic-quotes-12min",
-      "title": "Stoic Quotes – 12 Minutes",
+      "title": "Stoic Quotes - 12 Minutes",
       "categoryId": "masculine-mindset",
       "filePath": "Stoic_Quotes_Compilation_12_Minutes.mp3",
       "description": "Compilation of stoic quotes for mindset development",
@@ -119,7 +119,7 @@
     },
     {
       "id": "stoic-quotes-17min",
-      "title": "Stoic Quotes 2 – 17 Minutes",
+      "title": "Stoic Quotes 2 - 17 Minutes",
       "categoryId": "masculine-mindset",
       "filePath": "Stoic_Life_Lessons_Men_Learn_Too_Late_In_Life__BE_UNSHAKEABLE.mp3",
       "description": "Life lessons and stoic wisdom",

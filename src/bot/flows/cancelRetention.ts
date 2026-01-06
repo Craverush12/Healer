@@ -2,7 +2,8 @@ import { Markup, Telegraf } from "telegraf";
 import type { Context } from "telegraf";
 import type { Env } from "../../config/env";
 import type { SqliteDb } from "../../db/db";
-import { getUser, setCancelReason } from "../../db/usersRepo";
+import { applyStateTransition, getUser, setCancelReason } from "../../db/usersRepo";
+import { logger } from "../../logger";
 
 function isSubscriberState(state: string | null | undefined): boolean {
   return state === "ACTIVE_SUBSCRIBER" || state === "CANCEL_PENDING";
@@ -103,10 +104,28 @@ export function registerCancelRetentionHandlers(
       return;
     }
     await ctx.answerCbQuery();
+
+    const telegramUserId = ctx.from?.id;
+    if (telegramUserId) {
+      const user = getUser(db, telegramUserId);
+      const isSub = user && isSubscriberState(user.state);
+      if (isSub) {
+        const applied = applyStateTransition({
+          db,
+          telegramUserId,
+          nextState: "CANCEL_PENDING",
+          eventAt: null
+        });
+        logger.info({ telegramUserId, applied }, "Cancel intent captured locally; awaiting provider webhook for final state.");
+      }
+    }
+
     await ctx.reply(
       [
         "To finish cancelling, use the subscription portal:",
         env.MANAGE_SUBSCRIPTION_URL,
+        "",
+        "We've recorded your cancel request locally. Final confirmation happens when the portal/webhook processes it.",
         "",
         "Important:",
         "- Cancel at period end (no refunds, no proration).",
@@ -116,4 +135,3 @@ export function registerCancelRetentionHandlers(
     );
   });
 }
-

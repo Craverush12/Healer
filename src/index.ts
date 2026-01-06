@@ -9,9 +9,20 @@ import { applySchema, openSqlite } from "./db/db";
 import { SCHEMA_SQL } from "./db/schema";
 import { loadAudioLibrary } from "./content/library";
 import { createBot } from "./bot/bot";
+import { getSampleCheckoutUrl } from "./bot/flows/subscribe";
 
 async function main() {
   const env = loadEnv(process.env);
+
+  if (env.ENABLE_PAYMENTS) {
+    const sampleCheckoutUrl = getSampleCheckoutUrl(env);
+    if (sampleCheckoutUrl) {
+      logger.info(
+        { sampleCheckoutUrl },
+        "Checkout template validated; sample URL shown with {telegram_user_id} placeholder substituted."
+      );
+    }
+  }
 
   // SQLite init + schema
   const db = openSqlite(env.DB_PATH);

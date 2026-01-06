@@ -72,6 +72,22 @@ export function loadEnv(raw: NodeJS.ProcessEnv): Env {
     if (!hasSig && !hasToken) {
       throw new Error("Webhook auth not configured: set GHL_WEBHOOK_SECRET or WEBHOOK_TOKEN.");
     }
+
+    const placeholder = "{telegram_user_id}";
+    if (!env.GHL_CHECKOUT_URL_TEMPLATE.includes(placeholder)) {
+      throw new Error(`GHL_CHECKOUT_URL_TEMPLATE must include placeholder ${placeholder}`);
+    }
+    if (env.GHL_CHECKOUT_URL_TEMPLATE.includes("{token}")) {
+      throw new Error("GHL_CHECKOUT_URL_TEMPLATE should no longer use {token}; use {telegram_user_id} instead.");
+    }
+
+    const sampleUrl = env.GHL_CHECKOUT_URL_TEMPLATE.replace(placeholder, "123456789");
+    try {
+      // eslint-disable-next-line no-new
+      new URL(sampleUrl);
+    } catch {
+      throw new Error("GHL_CHECKOUT_URL_TEMPLATE did not produce a valid URL after substituting {telegram_user_id}.");
+    }
   }
 
   return env;

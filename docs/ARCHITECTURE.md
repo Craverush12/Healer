@@ -7,6 +7,8 @@ One Node.js process runs:
 - Express HTTP server (health + webhooks)
 - SQLite persistence
 
+> Scaling note: This design assumes a single instance. If you need horizontal scale, move SQLite to a shared DB, swap the in-memory rate limiter for a shared store (e.g., Redis), and coordinate bot/webhook processing so idempotency and ordering guarantees hold across nodes.
+
 ## Source of truth
 
 - **GoHighLevel (GHL)** is the billing source of truth.

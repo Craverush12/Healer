@@ -1,15 +1,21 @@
 import type { Context } from "telegraf";
 import type { Env } from "../../config/env";
 import type { SqliteDb } from "../../db/db";
-import { createCheckoutToken } from "../../db/checkoutTokenRepo";
 import { applyStateTransition, getUser, upsertUserIfMissing } from "../../db/usersRepo";
 import { buildMainMenuKeyboard } from "../menus";
 
-export function buildCheckoutUrl(env: Env, token: string): string {
+const CHECKOUT_PLACEHOLDER = "{telegram_user_id}";
+
+export function buildCheckoutUrl(env: Env, telegramUserId: number): string {
   if (!env.GHL_CHECKOUT_URL_TEMPLATE) {
     throw new Error("GHL_CHECKOUT_URL_TEMPLATE not configured");
   }
-  return env.GHL_CHECKOUT_URL_TEMPLATE.replace("{token}", encodeURIComponent(token));
+  return env.GHL_CHECKOUT_URL_TEMPLATE.replace(CHECKOUT_PLACEHOLDER, encodeURIComponent(String(telegramUserId)));
+}
+
+export function getSampleCheckoutUrl(env: Env): string | null {
+  if (!env.ENABLE_PAYMENTS || !env.GHL_CHECKOUT_URL_TEMPLATE) return null;
+  return buildCheckoutUrl(env, 123456789);
 }
 
 export async function handleSubscribe(params: { ctx: Context; env: Env; db: SqliteDb }) {
@@ -42,8 +48,6 @@ export async function handleSubscribe(params: { ctx: Context; env: Env; db: Sqli
     return;
   }
 
-  const token = createCheckoutToken(db, telegramUserId);
-  const url = buildCheckoutUrl(env, token);
+  const url = buildCheckoutUrl(env, telegramUserId);
   await ctx.reply(["Tap the link to subscribe:", url, "", "After checkout, access is granted automatically."].join("\n"));
 }
-
