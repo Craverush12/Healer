@@ -11,7 +11,7 @@ import { loadAudioLibrary } from "./content/library";
 import { createBot } from "./bot/bot";
 import { getSampleCheckoutUrl } from "./bot/flows/subscribe";
 import { initGhlClient } from "./ghl/ghlClient";
-import { validateAndRecoverAudio } from "./content/audioRecovery";
+// Audio recovery is imported dynamically to ensure module is loaded when needed
 
 async function main() {
   const env = loadEnv(process.env);
@@ -136,18 +136,6 @@ async function main() {
   // Launch bot after HTTP server is listening so container port is bound even if Telegram hangs.
   (async () => {
     try {
-      logger.info("🚀 Starting bot launch sequence");
-      
-      // Test if recovery module can be imported
-      try {
-        const recoveryModule = await import("./content/audioRecovery");
-        logger.info({ 
-          hasValidateAndRecoverAudio: typeof recoveryModule.validateAndRecoverAudio === "function"
-        }, "✅ Audio recovery module imported successfully");
-      } catch (importErr: any) {
-        logger.error({ importErr, errorMessage: importErr?.message }, "❌ Failed to import audio recovery module");
-      }
-      
       logger.info("Launching Telegram bot");
       // Ensure we are in polling mode and not blocked by a lingering webhook.
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -172,20 +160,29 @@ async function main() {
       }
       
       // Start audio recovery validation in background (after 15 seconds delay to ensure bot is fully ready)
-      logger.info({ delaySeconds: 15, adminCount: env.ADMIN_TELEGRAM_USER_IDS.length }, "Scheduling audio recovery validation");
-      setTimeout(async () => {
-        try {
-          logger.info("🔄 Starting background audio recovery validation");
-          if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
-            logger.warn("No admin IDs configured - audio recovery requires admin chat ID for uploads");
-            return;
+      // Recovery will also happen on-demand when users request audio, so this is optional
+      if (env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
+        logger.info({ delaySeconds: 15, adminCount: env.ADMIN_TELEGRAM_USER_IDS.length }, "Scheduling audio recovery validation");
+        setTimeout(async () => {
+          try {
+            logger.info("🔄 Starting background audio recovery validation");
+            // Use dynamic import like the manual command for consistency
+            const { validateAndRecoverAudio } = await import("./content/audioRecovery");
+            await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+            logger.info("✅ Audio recovery validation completed");
+          } catch (err: any) {
+            logger.error({ 
+              err, 
+              errorMessage: err?.message,
+              errorCode: err?.response?.error_code,
+              errorDescription: err?.response?.description,
+              stack: err?.stack 
+            }, "❌ Audio recovery validation failed with error");
           }
-          await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
-          logger.info("✅ Audio recovery validation completed");
-        } catch (err: any) {
-          logger.error({ err, stack: err?.stack }, "❌ Audio recovery validation failed with error");
-        }
-      }, 15000); // 15 second delay to ensure bot is fully ready
+        }, 15000); // 15 second delay to ensure bot is fully ready
+      } else {
+        logger.info("No admin IDs configured - audio recovery will happen on-demand when users request audio");
+      }
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
       logger.error("Possible causes:");

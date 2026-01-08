@@ -626,15 +626,18 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     }
 
     if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
-      await ctx.reply("❌ No admin IDs configured. Recovery requires admin chat ID for uploads.");
-      return;
+      await ctx.reply("⚠️ No admin IDs configured. Recovery will use your chat ID for uploads.\n\n🔄 Starting manual audio recovery from Google Drive...\n\nThis may take 2-3 minutes for all files.");
+    } else {
+      await ctx.reply("🔄 Starting manual audio recovery from Google Drive...\n\nThis may take 2-3 minutes for all files.");
     }
-
-    await ctx.reply("🔄 Starting manual audio recovery from Google Drive...\n\nThis may take 2-3 minutes for all files.");
 
     try {
       const { validateAndRecoverAudio } = await import("../content/audioRecovery");
-      await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+      // Use admin IDs if available, otherwise use the current user's ID
+      const chatIds = env.ADMIN_TELEGRAM_USER_IDS.length > 0 
+        ? env.ADMIN_TELEGRAM_USER_IDS 
+        : [telegramUserId];
+      await validateAndRecoverAudio(bot, db, audio, chatIds);
       await ctx.reply("✅ Audio recovery completed! All files should now be available.");
     } catch (err: any) {
       logger.error({ err }, "Manual audio recovery failed");

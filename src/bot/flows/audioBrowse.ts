@@ -9,6 +9,7 @@ import { getTelegramAudioFileId } from "../../db/audioCacheRepo";
 import type { SqliteDb } from "../../db/db";
 import { getUser } from "../../db/usersRepo";
 import { logger } from "../../logger";
+import { recoverAudioItemForUser } from "../../content/audioRecovery";
 
 const TELEGRAM_AUDIO_LIMIT_BYTES = 49 * 1024 * 1024; // Slightly under Telegram's 50MB cap for bots
 
@@ -263,7 +264,27 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
             "Failed to send audio by file_id"
           );
           if (isWrongFileIdentifier(err)) {
-            logger.warn({ itemId, fileIdToUse }, "Invalid Telegram file_id; attempting local file fallback");
+            logger.warn({ itemId, fileIdToUse }, "Invalid Telegram file_id; attempting Google Drive recovery");
+            
+            // Try to recover from Google Drive first
+            if (item.googleDriveUrl) {
+              try {
+                await ctx.reply("🔄 Recovering audio from backup... This may take a moment.");
+                const telegramUserId = ctx.from?.id;
+                if (telegramUserId) {
+                  const newFileId = await recoverAudioItemForUser(bot, db, item, telegramUserId, caption);
+                  if (newFileId) {
+                    logger.info({ itemId, newFileId }, "✅ Audio recovered from Google Drive and sent to user");
+                    return;
+                  }
+                }
+              } catch (recoveryErr: any) {
+                logger.error({ err: recoveryErr, itemId }, "Google Drive recovery failed, falling back to local file");
+              }
+            }
+            
+            // Fallback to local file if Google Drive recovery failed or not available
+            logger.warn({ itemId, fileIdToUse }, "Attempting local file fallback");
             const ok = await sendAudioFromFile({
               ctx,
               item,
@@ -274,8 +295,7 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
             });
             if (!ok) {
               logger.error({ itemId, fileIdToUse }, "Complete audio failure - file_id invalid AND local file missing");
-              // Notify admin of the issue
-              await ctx.reply("🔧 Technical issue detected. Admin has been notified and will restore audio access shortly.");
+              await ctx.reply("🔧 Sorry, this audio is temporarily unavailable. Please try again in a few moments.");
             }
             return;
           }

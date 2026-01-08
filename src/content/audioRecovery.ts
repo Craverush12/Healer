@@ -124,17 +124,39 @@ async function uploadToTelegram(
 
 /**
  * Recovers a single audio item from Google Drive if its file_id is invalid.
+ * Uploads to the specified chat ID (can be any user, not just admin).
+ * Returns the new file_id if successful, null otherwise.
+ */
+export async function recoverAudioItemForUser(
+  bot: Telegraf,
+  db: SqliteDb,
+  item: { id: string; title: string; googleDriveUrl?: string },
+  chatId: number,
+  caption?: string
+): Promise<string | null> {
+  const success = await recoverAudioItem(bot, db, item, chatId, caption);
+  if (success) {
+    // Return the newly cached file_id
+    return getTelegramAudioFileId(db, item.id) ?? null;
+  }
+  return null;
+}
+
+/**
+ * Internal function to recover a single audio item from Google Drive.
+ * Uploads to the specified chat ID (can be any user, not just admin).
  */
 async function recoverAudioItem(
   bot: Telegraf,
   db: SqliteDb,
   item: { id: string; title: string; googleDriveUrl?: string },
-  adminChatId: number
+  chatId: number,
+  caption?: string
 ): Promise<boolean> {
   logger.info({
     itemId: item.id,
     title: item.title,
-    adminChatId,
+    chatId,
     hasGoogleDriveUrl: !!item.googleDriveUrl
   }, "🔄 Starting recovery for audio item");
   
@@ -169,7 +191,7 @@ async function recoverAudioItem(
     logger.info({
       itemId: item.id,
       title: item.title,
-      adminChatId,
+      chatId,
       sizeBytes: audioBuffer.length
     }, "Step 3: Uploading to Telegram");
     
@@ -180,9 +202,9 @@ async function recoverAudioItem(
     const uploadStartTime = Date.now();
     
     const message = await bot.telegram.sendAudio(
-      adminChatId,
+      chatId,
       { source: stream },
-      { title: item.title }
+      { title: item.title, caption }
     );
     
     const uploadTime = Date.now() - uploadStartTime;
@@ -238,12 +260,13 @@ async function recoverAudioItem(
 /**
  * Validates and recovers all audio items on startup.
  * Runs in background after bot initialization.
+ * If no admin chat IDs provided, recovery will happen on-demand when users request audio.
  */
 export async function validateAndRecoverAudio(
   bot: Telegraf,
   db: SqliteDb,
   audio: AudioLibrary,
-  adminChatIds: number[]
+  adminChatIds: number[] = []
 ): Promise<void> {
   logger.info({
     adminChatIdsCount: adminChatIds.length,
@@ -251,13 +274,14 @@ export async function validateAndRecoverAudio(
     audioItemsCount: audio.manifest.items.length
   }, "🔄 validateAndRecoverAudio called - entry point");
   
+  // If no admin IDs, skip startup recovery - it will happen on-demand when users request audio
   if (adminChatIds.length === 0) {
-    logger.error("❌ No admin chat IDs provided, skipping audio recovery validation");
+    logger.info("No admin chat IDs provided - audio recovery will happen on-demand when users request audio");
     return;
   }
   
-  const adminChatId = adminChatIds[0]; // Use first admin for uploads
-  logger.info({ adminChatId, totalAdmins: adminChatIds.length }, "Using admin chat ID for uploads");
+  const chatId = adminChatIds[0]; // Use first admin for uploads
+  logger.info({ chatId, totalAdmins: adminChatIds.length }, "Using admin chat ID for uploads");
   
   logger.info("🔄 Starting audio file ID validation and recovery");
   
@@ -304,7 +328,7 @@ export async function validateAndRecoverAudio(
         }, "✅ Google Drive URL available - starting recovery");
         
         try {
-          const success = await recoverAudioItem(bot, db, item, adminChatId);
+          const success = await recoverAudioItem(bot, db, item, chatId, undefined);
           if (success) {
             recovered++;
             logger.info({ itemId: item.id }, "✅ Recovery successful");
@@ -345,7 +369,7 @@ export async function validateAndRecoverAudio(
           }, "✅ Google Drive URL available - starting recovery");
           
           try {
-            const success = await recoverAudioItem(bot, db, item, adminChatId);
+            const success = await recoverAudioItem(bot, db, item, chatId, undefined);
             if (success) {
               recovered++;
               logger.info({ itemId: item.id }, "✅ Recovery successful");
