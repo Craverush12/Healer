@@ -208,9 +208,9 @@ async function main() {
         .catch((err) => {
           logger.error({ err }, "Keep-alive ping failed - app may sleep");
         });
-    }, 4 * 60 * 1000); // Every 4 minutes (more frequent)
+    }, 2 * 60 * 1000); // Every 2 minutes
       
-      logger.info("Keep-alive mechanism activated (4-minute intervals) - preventing Render sleep");
+      logger.info("Keep-alive mechanism activated (2-minute intervals) - preventing Render sleep");
       
     
     // Clean up interval on shutdown
