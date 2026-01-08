@@ -14,6 +14,12 @@ One Node.js process runs:
 - **GoHighLevel (GHL)** is the billing source of truth.
 - The bot uses **local DB state only** at runtime to decide access.
 - DB state is updated only by authenticated webhooks.
+- To recover after ephemeral disk resets (e.g., Render redeploy), the bot can resync from GHL on `/start` using the GHL API key.
+
+## Persistence notes (Render)
+
+- Render free tiers often provide ephemeral disks. If you want durable state, attach a persistent disk for SQLite or move to Postgres.
+- Resync is a safety net, not a replacement for durable storage.
 
 ## State machine
 

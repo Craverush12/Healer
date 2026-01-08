@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   ghl_contact_id TEXT,
   cancel_reason TEXT,
   last_event_at INTEGER,
+  last_resync_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

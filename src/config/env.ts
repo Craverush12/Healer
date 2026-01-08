@@ -44,7 +44,10 @@ const EnvSchema = z.object({
         .map((s) => Number(s))
         .filter((n) => Number.isFinite(n));
     })
-    .default(() => [])
+    .default(() => []),
+
+  // Resync cooldown for /start and /resync (minutes).
+  RESYNC_COOLDOWN_MINUTES: z.coerce.number().int().min(0).default(10)
 });
 
 export type Env = z.infer<typeof EnvSchema>;

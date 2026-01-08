@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { logger } from "../logger";
 
 export type SqliteDb = Database.Database;
 
@@ -16,5 +17,17 @@ export function openSqlite(dbPath: string): SqliteDb {
 
 export function applySchema(db: SqliteDb, schemaSql: string) {
   db.exec(schemaSql);
+
+  try {
+    const cols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+    const hasLastResyncAt = cols.some((col) => col.name === "last_resync_at");
+    if (!hasLastResyncAt) {
+      db.prepare("ALTER TABLE users ADD COLUMN last_resync_at INTEGER").run();
+      logger.info("Applied migration: users.last_resync_at");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to apply schema migrations");
+    throw err;
+  }
 }
 

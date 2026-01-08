@@ -72,3 +72,28 @@ To enable:
 
 If not set, the backend will store the event as “unlinked” and will not grant/revoke access.
 
+## 7) Resync on /start (ephemeral disk recovery)
+
+Render and other hosts can reset SQLite on redeploy. To avoid paid users being blocked, the bot can resync on `/start` (and `/resync`):
+- It searches for the contact by `telegram_user_id` custom field.
+- If found, it checks subscription status and updates local state.
+
+To enable resync:
+- Create a GHL Private Integration API key with at least `contacts.readonly`.
+- Set:
+  - `GHL_API_KEY`
+  - `GHL_API_BASE_URL` (default)
+  - `RESYNC_COOLDOWN_MINUTES` (default 10)
+
+Note: GHL subscription APIs can vary by tenant. If the subscription endpoint differs, update `src/ghl/ghlClient.ts` accordingly.
+
+## Manual test checklist
+
+1) Pay -> webhook sets ACTIVE
+   - Complete checkout, confirm `subscription.created` webhook updates state.
+2) Redeploy -> /start resync keeps access
+   - Redeploy (simulate DB reset), run `/start`, confirm access is still ACTIVE.
+3) Cancellation path
+   - Send a `subscription.updated` cancel_at_period_end webhook and confirm CANCEL_PENDING.
+   - Send `subscription.cancelled` and confirm CANCELLED.
+

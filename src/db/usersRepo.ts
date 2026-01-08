@@ -6,6 +6,7 @@ export type UserRow = {
   ghl_contact_id: string | null;
   cancel_reason: string | null;
   last_event_at: number | null;
+  last_resync_at: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -25,7 +26,7 @@ export function upsertUserIfMissing(db: DbLike, telegramUserId: number): UserRow
     if (existing) return existing;
 
     db.prepare(
-      "INSERT INTO users (telegram_user_id, state, ghl_contact_id, cancel_reason, last_event_at, created_at, updated_at) VALUES (?, ?, NULL, NULL, NULL, ?, ?)"
+      "INSERT INTO users (telegram_user_id, state, ghl_contact_id, cancel_reason, last_event_at, last_resync_at, created_at, updated_at) VALUES (?, ?, NULL, NULL, NULL, NULL, ?, ?)"
     ).run(telegramUserId, "NOT_SUBSCRIBED", now, now);
 
     return db.prepare("SELECT * FROM users WHERE telegram_user_id = ?").get(telegramUserId) as UserRow;
@@ -42,6 +43,24 @@ export function getUser(db: DbLike, telegramUserId: number): UserRow | null {
 export function setCancelReason(db: DbLike, telegramUserId: number, reason: string) {
   const now = Date.now();
   db.prepare("UPDATE users SET cancel_reason = ?, updated_at = ? WHERE telegram_user_id = ?").run(reason, now, telegramUserId);
+}
+
+export function setLastResyncAt(db: DbLike, telegramUserId: number, lastResyncAt: number) {
+  const now = Date.now();
+  db.prepare("UPDATE users SET last_resync_at = ?, updated_at = ? WHERE telegram_user_id = ?").run(
+    lastResyncAt,
+    now,
+    telegramUserId
+  );
+}
+
+export function setGhlContactId(db: DbLike, telegramUserId: number, ghlContactId: string) {
+  const now = Date.now();
+  db.prepare("UPDATE users SET ghl_contact_id = ?, updated_at = ? WHERE telegram_user_id = ?").run(
+    ghlContactId,
+    now,
+    telegramUserId
+  );
 }
 
 /**

@@ -22,6 +22,10 @@ async function main() {
         "Checkout template validated; sample URL shown with {telegram_user_id} placeholder substituted."
       );
     }
+
+    if (!env.GHL_API_KEY) {
+      logger.warn("GHL_API_KEY missing; resync disabled, webhook-only mode.");
+    }
   }
 
   // SQLite init + schema

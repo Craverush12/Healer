@@ -11,12 +11,20 @@ import {
   upsertTelegramAudioFileId
 } from "../db/audioCacheRepo";
 import type { SqliteDb } from "../db/db";
-import { getUser, upsertUserIfMissing } from "../db/usersRepo";
+import {
+  applyStateTransition,
+  getUser,
+  setGhlContactId,
+  setLastResyncAt,
+  upsertUserIfMissing,
+  type UserState
+} from "../db/usersRepo";
 import { logger } from "../logger";
 import { registerAudioBrowseHandlers, showCategories } from "./flows/audioBrowse";
 import { registerCancelRetentionHandlers, startCancellationFlow } from "./flows/cancelRetention";
 import { handleSubscribe } from "./flows/subscribe";
 import { MENU_LABELS, buildMainMenuKeyboard, renderHelpText } from "./menus";
+import { findContactByTelegramUserId, getSubscriptionStatusForContact } from "../ghl/ghlClient";
 
 function hasAudioAccess(state: string | null | undefined): boolean {
   return state === "ACTIVE_SUBSCRIBER" || state === "CANCEL_PENDING";
@@ -24,6 +32,118 @@ function hasAudioAccess(state: string | null | undefined): boolean {
 
 function isAdmin(env: Env, telegramUserId: number): boolean {
   return env.ADMIN_TELEGRAM_USER_IDS.includes(telegramUserId);
+}
+
+function mapSubscriptionToState(status: {
+  isActive: boolean;
+  cancelAtPeriodEnd: boolean;
+  ended: boolean;
+}): UserState | null {
+  if (status.isActive && status.cancelAtPeriodEnd) return "CANCEL_PENDING";
+  if (status.isActive) return "ACTIVE_SUBSCRIBER";
+  if (status.ended) return "CANCELLED";
+  return null;
+}
+
+function buildResyncMessage(state: UserState): string {
+  if (state === "ACTIVE_SUBSCRIBER") {
+    return "Subscription detected and synced. You now have access to the audio library.";
+  }
+  if (state === "CANCEL_PENDING") {
+    return "Subscription detected and synced. Cancellation is scheduled at period end.";
+  }
+  return "Subscription status synced. Access remains revoked.";
+}
+
+async function resyncFromGhl(params: {
+  env: Env;
+  db: SqliteDb;
+  telegramUserId: number;
+  force?: boolean;
+  source: "start" | "command";
+}) {
+  const { env, db, telegramUserId, force, source } = params;
+
+  if (!env.ENABLE_PAYMENTS) {
+    logger.info({ telegramUserId, source }, "Resync skipped (payments disabled)");
+    return { attempted: false, skipped: "payments_disabled" as const };
+  }
+
+  if (!env.GHL_API_KEY) {
+    logger.info({ telegramUserId, source }, "Resync skipped (no GHL_API_KEY; webhook-only mode)");
+    return { attempted: false, skipped: "no_api_key" as const };
+  }
+
+  const user = getUser(db, telegramUserId);
+  if (!user) {
+    logger.warn({ telegramUserId, source }, "Resync skipped (user missing)");
+    return { attempted: false, skipped: "no_user" as const };
+  }
+
+  if (user.state === "ACTIVE_SUBSCRIBER" || user.state === "CANCEL_PENDING") {
+    logger.info({ telegramUserId, source, state: user.state }, "Resync skipped (state already active)");
+    return { attempted: false, skipped: "already_active" as const };
+  }
+
+  const now = Date.now();
+  const cooldownMs = env.RESYNC_COOLDOWN_MINUTES * 60 * 1000;
+  const lastResyncAt = user.last_resync_at ?? null;
+  if (!force && cooldownMs > 0 && lastResyncAt && now - lastResyncAt < cooldownMs) {
+    logger.info(
+      { telegramUserId, source, lastResyncAt, cooldownMs },
+      "Resync skipped (cooldown)"
+    );
+    return { attempted: false, skipped: "cooldown" as const };
+  }
+
+  logger.info({ telegramUserId, source, force: !!force }, "Resync started");
+
+  const contact = await findContactByTelegramUserId({ env, telegramUserId });
+  if (!contact) {
+    setLastResyncAt(db, telegramUserId, now);
+    logger.info({ telegramUserId, source }, "Resync: no contact found");
+    return { attempted: true, skipped: "no_contact" as const };
+  }
+
+  setGhlContactId(db, telegramUserId, contact.contactId);
+  logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: contact linked");
+
+  const subscription = await getSubscriptionStatusForContact({ env, contactId: contact.contactId });
+  setLastResyncAt(db, telegramUserId, now);
+
+  if (!subscription) {
+    logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: subscription lookup failed");
+    return { attempted: true, skipped: "no_subscription_data" as const };
+  }
+
+  const nextState = mapSubscriptionToState(subscription);
+  if (!nextState) {
+    logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: no active subscription");
+    return { attempted: true, skipped: "no_active_subscription" as const };
+  }
+
+  const applied = applyStateTransition({
+    db,
+    telegramUserId,
+    nextState,
+    eventAt: null,
+    ghlContactId: contact.contactId
+  });
+
+  logger.info(
+    {
+      telegramUserId,
+      contactId: contact.contactId,
+      source,
+      nextState,
+      applied,
+      subscriptionSource: subscription.source,
+      subscriptionCount: subscription.count
+    },
+    "Resync: state evaluation complete"
+  );
+
+  return { attempted: true, nextState: applied ? nextState : null };
 }
 
 export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary }) {
@@ -37,7 +157,23 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
       const telegramUserId = ctx.from.id;
       logger.info({ telegramUserId }, "Telegram /start");
       upsertUserIfMissing(db, telegramUserId);
-      const user = getUser(db, telegramUserId);
+      let user = getUser(db, telegramUserId);
+
+      if (user && (user.state === "NOT_SUBSCRIBED" || user.state === "CANCELLED")) {
+        const resyncResult = await resyncFromGhl({
+          env,
+          db,
+          telegramUserId,
+          source: "start"
+        });
+
+        if (resyncResult.attempted) {
+          user = getUser(db, telegramUserId);
+          if (resyncResult.nextState && user && user.state === resyncResult.nextState) {
+            await ctx.reply(buildResyncMessage(user.state));
+          }
+        }
+      }
 
       const keyboard = buildMainMenuKeyboard(user?.state ?? "NOT_SUBSCRIBED", env, audio);
       const welcomeText = [
@@ -61,6 +197,66 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
 
   bot.command("subscribe", async (ctx) => {
     await handleSubscribe({ ctx, env, db });
+  });
+
+  bot.command("resync", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+
+    const text = (ctx.message as any)?.text ?? "";
+    const parts = String(text).trim().split(/\s+/);
+    const force = parts[1]?.toLowerCase() === "force";
+    const canForce = force && isAdmin(env, telegramUserId);
+
+    if (force && !canForce) {
+      await ctx.reply("Force resync is admin-only.");
+      return;
+    }
+
+    const result = await resyncFromGhl({
+      env,
+      db,
+      telegramUserId,
+      source: "command",
+      force: canForce
+    });
+
+    if (!result.attempted) {
+      if (result.skipped === "payments_disabled") {
+        await ctx.reply("Payments are disabled. Resync not required.");
+        return;
+      }
+      if (result.skipped === "no_api_key") {
+        await ctx.reply("Resync is not configured yet (missing GHL API key).");
+        return;
+      }
+      if (result.skipped === "cooldown") {
+        await ctx.reply("Resync was run recently. Try again in a few minutes.");
+        return;
+      }
+      if (result.skipped === "already_active") {
+        await ctx.reply("Your subscription is already active.");
+        return;
+      }
+      await ctx.reply("Resync skipped.");
+      return;
+    }
+
+    if (result.nextState) {
+      await ctx.reply(buildResyncMessage(result.nextState));
+      return;
+    }
+
+    if (result.skipped === "no_contact") {
+      await ctx.reply("No billing profile found for your Telegram account.");
+      return;
+    }
+    if (result.skipped === "no_active_subscription") {
+      await ctx.reply("No active subscription found.");
+      return;
+    }
+
+    await ctx.reply("Resync completed.");
   });
 
   bot.command("browse", async (ctx) => {
