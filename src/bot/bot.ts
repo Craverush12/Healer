@@ -661,6 +661,10 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
       report.push("❌ **Need upload:**");
       missing.forEach(item => {
         try {
+          if (!item.filePath) {
+            report.push(`• ${item.title} (NO FILE PATH)`);
+            return;
+          }
           const fullPath = resolveAudioFilePath(item.filePath);
           const stats = fs.statSync(fullPath);
           const sizeMb = Math.ceil(stats.size / (1024 * 1024));
