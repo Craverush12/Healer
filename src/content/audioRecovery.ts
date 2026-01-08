@@ -151,11 +151,25 @@ export async function validateAndRecoverAudio(
     const manifestFileId = item.telegramFileId;
     const fileIdToTest = cachedFileId ?? manifestFileId;
     
+    // Case 1: No file ID at all - recover from Google Drive if available
     if (!fileIdToTest) {
-      logger.debug({ itemId: item.id }, "No file ID to validate");
+      if (item.googleDriveUrl) {
+        logger.info({ itemId: item.id, title: item.title }, "No file ID found, recovering from Google Drive");
+        const success = await recoverAudioItem(bot, db, item, adminChatId);
+        if (success) {
+          recovered++;
+        } else {
+          failed++;
+        }
+        // Small delay to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } else {
+        logger.debug({ itemId: item.id }, "No file ID and no Google Drive URL - skipping");
+      }
       continue;
     }
     
+    // Case 2: File ID exists - validate it
     validated++;
     logger.debug({ itemId: item.id, fileId: fileIdToTest }, "Validating file ID");
     
