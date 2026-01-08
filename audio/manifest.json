@@ -89,8 +89,9 @@
       "id": "thunder-sounds",
       "title": "Thunder Sounds",
       "categoryId": "noise-nature",
-      "filePath": "NOISE_AND_NATURE/Soundscape_8_Hours.mp3",
-      "description": "8-hour thunder soundscape for meditation, focus, or sleep",
+      "type": "external",
+      "url": "https://your-cloud-storage.com/thunder-sounds.mp3",
+      "description": "8-hour thunder soundscape for meditation, focus, or sleep (external link)",
       "duration": "8 hours",
       "whenToUse": ["anytime", "sleep", "focus"]
     },
