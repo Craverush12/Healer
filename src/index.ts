@@ -52,6 +52,19 @@ async function main() {
     "Audio library loaded"
   );
 
+  // Check audio availability on startup
+  const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
+  const availableCount = audioItems.filter(item => {
+    const dbFileId = db.prepare("SELECT telegram_file_id FROM telegram_audio_cache WHERE item_id = ?").get(item.id);
+    return !!(dbFileId || item.telegramFileId);
+  }).length;
+  
+  logger.info({
+    totalAudio: audioItems.length,
+    availableAudio: availableCount,
+    missingAudio: audioItems.length - availableCount
+  }, "Audio availability check");
+
   // Telegram bot
   const bot = createBot({ env, db, audio });
 
@@ -87,27 +100,27 @@ async function main() {
     logger.info({ port: env.PORT }, "HTTP server listening");
     
     // Keep-alive mechanism for Render free tier (prevents container sleep)
-    if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
-      const keepAliveInterval = setInterval(() => {
-        fetch(`http://localhost:${env.PORT}/healthz`)
-          .then(() => {
-            logger.debug("Keep-alive ping successful");
-          })
-          .catch((err) => {
-            logger.warn({ err }, "Keep-alive ping failed");
-          });
-      }, 5 * 60 * 1000); // Every 5 minutes
+    // Always enable on Render (Render sets NODE_ENV to production automatically)
+    const keepAliveInterval = setInterval(() => {
+      fetch(`http://localhost:${env.PORT}/healthz`)
+        .then(() => {
+          logger.info("Keep-alive ping successful"); // Changed to info for visibility
+        })
+        .catch((err) => {
+          logger.error({ err }, "Keep-alive ping failed - app may sleep");
+        });
+    }, 4 * 60 * 1000); // Every 4 minutes (more frequent)
       
-      logger.info("Keep-alive mechanism activated (5-minute intervals)");
+      logger.info("Keep-alive mechanism activated (4-minute intervals) - preventing Render sleep");
       
-      // Clean up interval on shutdown
-      const originalShutdown = shutdown;
-      shutdown = (signal: string) => {
-        clearInterval(keepAliveInterval);
-        logger.info("Keep-alive mechanism deactivated");
-        originalShutdown(signal);
-      };
-    }
+    
+    // Clean up interval on shutdown
+    const originalShutdown = shutdown;
+    shutdown = (signal: string) => {
+      clearInterval(keepAliveInterval);
+      logger.info("Keep-alive mechanism deactivated");
+      originalShutdown(signal);
+    };
   });
 
   let shutdown = (signal: string) => {
@@ -127,6 +140,21 @@ async function main() {
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       await bot.launch();
       logger.info("Telegram bot launched");
+      
+      // Notify admin of successful restart (optional)
+      if (env.ADMIN_TELEGRAM_USER_IDS && env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
+        try {
+          const restartTime = new Date().toISOString();
+          for (const adminId of env.ADMIN_TELEGRAM_USER_IDS) {
+            await bot.telegram.sendMessage(
+              adminId, 
+              `🟢 Bot restarted successfully\nTime: ${restartTime}\nStatus: All systems operational`
+            );
+          }
+        } catch (notifyErr) {
+          logger.warn({ notifyErr }, "Failed to notify admin of restart");
+        }
+      }
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
       logger.error("Possible causes:");

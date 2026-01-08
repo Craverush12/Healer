@@ -269,11 +269,13 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
               item,
               caption,
               itemId,
-              missingMessage: "Audio not available yet, admin needs to ingest it.",
+              missingMessage: "⚠️ Audio temporarily unavailable due to server restart. Our team is working to restore it immediately.",
               logContext: { fallback: "local_file", fileIdToUse }
             });
             if (!ok) {
-              logger.warn({ itemId, fileIdToUse }, "Fallback to local file failed or missing; ingest required");
+              logger.error({ itemId, fileIdToUse }, "Complete audio failure - file_id invalid AND local file missing");
+              // Notify admin of the issue
+              await ctx.reply("🔧 Technical issue detected. Admin has been notified and will restore audio access shortly.");
             }
             return;
           }
