@@ -127,6 +127,10 @@ function resolveLocationId(env: Env): string | null {
   return cachedLocationId;
 }
 
+export function getResolvedLocationId(env: Env): string | null {
+  return resolveLocationId(env);
+}
+
 function extractContactId(contact: any): string | null {
   const id = contact?.id ?? contact?._id ?? null;
   return typeof id === "string" && id.trim().length > 0 ? id : null;
@@ -149,36 +153,43 @@ export async function findContactByTelegramUserId(params: {
 
   const url = `${getBaseUrl(env)}/contacts/search`;
   const locationId = resolveLocationId(env);
-  const body = {
-    query: String(telegramUserId),
+
+  const buildBody = (query: string) => ({
+    query,
     pageLimit: 1,
     ...(locationId ? { locationId } : {})
-  };
+  });
 
   try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: getAuthHeaders(env),
-      body: JSON.stringify(body)
-    });
+    const queries = [`telegram_user_id:${telegramUserId}`, String(telegramUserId)];
 
-    if (!resp.ok) {
-      logger.warn(
-        { status: resp.status, ...getRequestLogMeta({ url, env, locationId }) },
-        "GHL contact search failed"
-      );
-      return null;
+    for (const query of queries) {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: getAuthHeaders(env),
+        body: JSON.stringify(buildBody(query))
+      });
+
+      if (!resp.ok) {
+        logger.warn(
+          { status: resp.status, query, ...getRequestLogMeta({ url, env, locationId }) },
+          "GHL contact search failed"
+        );
+        return null;
+      }
+
+      const json = (await resp.json()) as any;
+      const contacts = extractContacts(json);
+      if (contacts.length === 0) continue;
+
+      const contact = contacts[0];
+      const contactId = extractContactId(contact);
+      if (!contactId) return null;
+
+      return { contactId, contact };
     }
 
-    const json = (await resp.json()) as any;
-    const contacts = extractContacts(json);
-    if (contacts.length === 0) return null;
-
-    const contact = contacts[0];
-    const contactId = extractContactId(contact);
-    if (!contactId) return null;
-
-    return { contactId, contact };
+    return null;
   } catch (err) {
     logger.warn({ err, ...getRequestLogMeta({ url, env, locationId }) }, "GHL contact search error");
     return null;

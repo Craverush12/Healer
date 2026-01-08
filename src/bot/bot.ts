@@ -24,7 +24,7 @@ import { registerAudioBrowseHandlers, showCategories } from "./flows/audioBrowse
 import { registerCancelRetentionHandlers, startCancellationFlow } from "./flows/cancelRetention";
 import { handleSubscribe } from "./flows/subscribe";
 import { MENU_LABELS, buildMainMenuKeyboard, renderHelpText } from "./menus";
-import { findContactByTelegramUserId, getSubscriptionStatusForContact } from "../ghl/ghlClient";
+import { findContactByTelegramUserId, getResolvedLocationId, getSubscriptionStatusForContact } from "../ghl/ghlClient";
 
 function hasAudioAccess(state: string | null | undefined): boolean {
   return state === "ACTIVE_SUBSCRIBER" || state === "CANCEL_PENDING";
@@ -72,6 +72,12 @@ async function resyncFromGhl(params: {
   if (!env.GHL_API_KEY) {
     logger.info({ telegramUserId, source }, "Resync skipped (no GHL_API_KEY; webhook-only mode)");
     return { attempted: false, skipped: "no_api_key" as const };
+  }
+
+  const resolvedLocationId = getResolvedLocationId(env);
+  if (!resolvedLocationId) {
+    logger.warn({ telegramUserId, source }, "Resync disabled: missing GHL_LOCATION_ID");
+    return { attempted: false, skipped: "missing_location_id" as const };
   }
 
   const user = getUser(db, telegramUserId);
@@ -228,6 +234,10 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
       }
       if (result.skipped === "no_api_key") {
         await ctx.reply("Resync is not configured yet (missing GHL API key).");
+        return;
+      }
+      if (result.skipped === "missing_location_id") {
+        await ctx.reply("Resync is not configured yet (missing GHL location id).");
         return;
       }
       if (result.skipped === "cooldown") {

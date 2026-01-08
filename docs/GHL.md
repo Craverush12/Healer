@@ -33,6 +33,15 @@ Events:
 - `subscription.cancelled`
 - `payment.failed`
 
+### Workflow notes (important)
+
+- Do NOT add a “Create Contact” action in Subscription workflows. The trigger already has a contact context, so GHL will skip it.
+- In the webhook action custom data, the keys must be exact:
+  - `event_type`
+  - `telegram_user_id`
+  - `contact_id`
+  If the key is truncated (e.g., `telegram_user_`), the backend will not link the user.
+
 ### Webhook authentication
 
 Preferred:
@@ -86,6 +95,8 @@ To enable resync:
   - `GHL_API_BASE_URL` (default)
   - `GHL_LOCATION_ID` (optional; required in some tenants)
   - `RESYNC_COOLDOWN_MINUTES` (default 10)
+
+If your tenant requires a locationId and it is missing, resync is disabled and the bot falls back to webhooks only.
 
 Note: LeadConnector API calls include `Version: 2021-07-28`. Subscription APIs can vary by tenant; if the endpoint differs, update `src/ghl/ghlClient.ts` accordingly.
 

@@ -24,6 +24,15 @@ async function main() {
       );
     }
 
+    logger.info(
+      {
+        baseUrl: env.GHL_API_BASE_URL,
+        hasApiKey: !!env.GHL_API_KEY,
+        hasLocationId: !!env.GHL_LOCATION_ID
+      },
+      "Resync configuration"
+    );
+
     if (!env.GHL_API_KEY) {
       logger.warn("GHL_API_KEY missing; resync disabled, webhook-only mode.");
     } else {
