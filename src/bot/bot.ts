@@ -102,29 +102,87 @@ async function resyncFromGhl(params: {
     return { attempted: false, skipped: "cooldown" as const };
   }
 
-  logger.info({ telegramUserId, source, force: !!force }, "Resync started");
+  logger.info({ 
+    telegramUserId, 
+    source, 
+    force: !!force,
+    userState: user.state,
+    lastResyncAt: user.last_resync_at,
+    ghlContactId: user.ghl_contact_id 
+  }, "Resync started - detailed context");
 
+  logger.debug({ telegramUserId, source }, "Resync step 1: Looking up contact in GHL");
   const contact = await findContactByTelegramUserId({ env, telegramUserId });
   if (!contact) {
     setLastResyncAt(db, telegramUserId, now);
-    logger.info({ telegramUserId, source }, "Resync: no contact found");
+    logger.warn({ 
+      telegramUserId, 
+      source,
+      searchedFor: telegramUserId,
+      ghlApiKey: !!env.GHL_API_KEY,
+      ghlLocationId: !!resolvedLocationId 
+    }, "Resync failed: no GHL contact found for Telegram user");
     return { attempted: true, skipped: "no_contact" as const };
   }
 
   setGhlContactId(db, telegramUserId, contact.contactId);
-  logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: contact linked");
+  logger.info({ 
+    telegramUserId, 
+    contactId: contact.contactId, 
+    source,
+    contactName: contact.contact?.firstName || contact.contact?.name || 'Unknown',
+    contactEmail: contact.contact?.email || 'No email'
+  }, "Resync step 2: GHL contact found and linked");
 
+  logger.debug({ telegramUserId, contactId: contact.contactId, source }, "Resync step 3: Looking up subscription status");
   const subscription = await getSubscriptionStatusForContact({ env, contactId: contact.contactId });
   setLastResyncAt(db, telegramUserId, now);
 
   if (!subscription) {
-    logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: subscription lookup failed");
+    logger.warn({ 
+      telegramUserId, 
+      contactId: contact.contactId, 
+      source,
+      ghlApiKey: !!env.GHL_API_KEY,
+      locationId: resolvedLocationId
+    }, "Resync failed: subscription lookup returned null - check GHL subscription endpoints");
     return { attempted: true, skipped: "no_subscription_data" as const };
   }
 
+  logger.info({
+    telegramUserId,
+    contactId: contact.contactId,
+    source,
+    subscription: {
+      isActive: subscription.isActive,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      ended: subscription.ended,
+      count: subscription.count,
+      source: subscription.source
+    }
+  }, "Resync step 4: Subscription data retrieved");
+
   const nextState = mapSubscriptionToState(subscription);
+  logger.debug({
+    telegramUserId,
+    contactId: contact.contactId,
+    source,
+    subscriptionStatus: subscription,
+    mappedState: nextState,
+    currentState: user.state
+  }, "Resync step 5: Subscription status mapped to user state");
+  
   if (!nextState) {
-    logger.info({ telegramUserId, contactId: contact.contactId, source }, "Resync: no active subscription");
+    logger.info({ 
+      telegramUserId, 
+      contactId: contact.contactId, 
+      source,
+      subscriptionFlags: {
+        isActive: subscription.isActive,
+        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        ended: subscription.ended
+      }
+    }, "Resync result: no active subscription found - subscription exists but not active");
     return { attempted: true, skipped: "no_active_subscription" as const };
   }
 

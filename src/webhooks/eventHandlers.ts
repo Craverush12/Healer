@@ -15,6 +15,8 @@ function toBool(v: any): boolean | null {
   return null;
 }
 
+import { logger } from "../logger";
+
 export function normalizeWebhook(payload: any): NormalizedWebhook {
   const eventTypeRaw =
     payload?.customData?.event_type ??
@@ -77,34 +79,101 @@ export function normalizeWebhook(payload: any): NormalizedWebhook {
     toBool(payload?.subscription?.ended) ??
     (normalizedStatus ? ["canceled", "cancelled", "ended"].includes(normalizedStatus) : null);
 
-  return { eventType, eventAt: safeEventAt, contactId, telegramUserId, isActive, cancelAtPeriodEnd, ended };
+  const result = { eventType, eventAt: safeEventAt, contactId, telegramUserId, isActive, cancelAtPeriodEnd, ended };
+  
+  logger.debug({
+    eventType,
+    contactId,
+    telegramUserId,
+    isActive,
+    cancelAtPeriodEnd,
+    ended,
+    rawPayloadKeys: Object.keys(payload || {}),
+    eventTypeRaw,
+    telegramUserIdSources: {
+      direct: payload?.telegram_user_id,
+      camelCase: payload?.telegramUserId,
+      contactField: payload?.contact?.telegram_user_id,
+      customFields: payload?.contact?.customFields?.telegram_user_id
+    },
+    subscriptionSources: {
+      status: payload?.subscription?.status ?? payload?.status,
+      isActive: payload?.subscription?.isActive ?? payload?.isActive,
+      cancelAtPeriodEnd: payload?.subscription?.cancelAtPeriodEnd ?? payload?.cancelAtPeriodEnd,
+      ended: payload?.subscription?.ended ?? payload?.ended
+    }
+  }, "Webhook payload normalized - field extraction details");
+
+  return result;
 }
 
 export function deriveNextState(n: NormalizedWebhook): { nextState: UserState | null; reason: string } {
   const t = n.eventType?.toLowerCase() ?? "";
 
-  if (t.includes("payment.failed")) return { nextState: null, reason: "payment_failed_no_state_change" };
+  logger.debug({
+    eventType: n.eventType,
+    normalizedEventType: t,
+    isActive: n.isActive,
+    cancelAtPeriodEnd: n.cancelAtPeriodEnd,
+    ended: n.ended
+  }, "State derivation input analysis");
+
+  if (t.includes("payment.failed")) {
+    logger.debug({ eventType: t }, "State derivation: payment failed - no state change");
+    return { nextState: null, reason: "payment_failed_no_state_change" };
+  }
 
   if (t.includes("subscription.cancelled") || t.includes("subscription.canceled") || n.ended === true) {
+    logger.info({ 
+      eventType: t, 
+      ended: n.ended,
+      reason: "subscription_cancelled_or_ended" 
+    }, "State derivation: subscription cancelled/ended -> CANCELLED");
     return { nextState: "CANCELLED", reason: "subscription_cancelled_or_ended" };
   }
 
   if (t.includes("subscription.created")) {
+    logger.info({ 
+      eventType: t,
+      reason: "subscription_created" 
+    }, "State derivation: subscription created -> ACTIVE_SUBSCRIBER");
     return { nextState: "ACTIVE_SUBSCRIBER", reason: "subscription_created" };
   }
 
   if (t.includes("subscription.updated")) {
     if (n.cancelAtPeriodEnd === true) {
+      logger.info({ 
+        eventType: t,
+        cancelAtPeriodEnd: n.cancelAtPeriodEnd,
+        reason: "cancel_at_period_end" 
+      }, "State derivation: subscription updated with cancel pending -> CANCEL_PENDING");
       return { nextState: "CANCEL_PENDING", reason: "cancel_at_period_end" };
     }
     if (n.isActive === true && n.cancelAtPeriodEnd === false) {
+      logger.info({ 
+        eventType: t,
+        isActive: n.isActive,
+        cancelAtPeriodEnd: n.cancelAtPeriodEnd,
+        reason: "active_not_cancel_pending" 
+      }, "State derivation: subscription updated active -> ACTIVE_SUBSCRIBER");
       return { nextState: "ACTIVE_SUBSCRIBER", reason: "active_not_cancel_pending" };
     }
     // If we cannot classify the update, don't change state.
+    logger.warn({ 
+      eventType: t,
+      isActive: n.isActive,
+      cancelAtPeriodEnd: n.cancelAtPeriodEnd,
+      ended: n.ended,
+      reason: "subscription_updated_unclassified" 
+    }, "State derivation: subscription updated but insufficient data to determine state");
     return { nextState: null, reason: "subscription_updated_unclassified" };
   }
 
-  // Unknown event types: ignore.
+  logger.warn({ 
+    eventType: t,
+    originalEventType: n.eventType,
+    reason: "unknown_event" 
+  }, "State derivation: unrecognized event type - no state change");
   return { nextState: null, reason: "unknown_event" };
 }
 

@@ -85,9 +85,32 @@ async function main() {
 
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, "HTTP server listening");
+    
+    // Keep-alive mechanism for Render free tier (prevents container sleep)
+    if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+      const keepAliveInterval = setInterval(() => {
+        fetch(`http://localhost:${env.PORT}/healthz`)
+          .then(() => {
+            logger.debug("Keep-alive ping successful");
+          })
+          .catch((err) => {
+            logger.warn({ err }, "Keep-alive ping failed");
+          });
+      }, 5 * 60 * 1000); // Every 5 minutes
+      
+      logger.info("Keep-alive mechanism activated (5-minute intervals)");
+      
+      // Clean up interval on shutdown
+      const originalShutdown = shutdown;
+      shutdown = (signal: string) => {
+        clearInterval(keepAliveInterval);
+        logger.info("Keep-alive mechanism deactivated");
+        originalShutdown(signal);
+      };
+    }
   });
 
-  const shutdown = (signal: string) => {
+  let shutdown = (signal: string) => {
     logger.warn({ signal }, "Shutting down...");
     bot.stop(signal);
     server.close(() => process.exit(0));

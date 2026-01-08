@@ -136,9 +136,14 @@ export function createGhlWebhookRouter(params: {
         contactId: normalized.contactId,
         telegramUserId,
         eventAt: normalized.eventAt,
-        payloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : []
+        payloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : [],
+        isActive: normalized.isActive,
+        cancelAtPeriodEnd: normalized.cancelAtPeriodEnd,
+        ended: normalized.ended,
+        rawEventType: payload?.type || payload?.event_type,
+        rawStatus: payload?.status || payload?.subscription?.status
       },
-      "Webhook normalized"
+      "Webhook normalized - enhanced debug info"
     );
 
     // Token-based linking: if telegram_user_id is missing, try resolving a checkout token.
@@ -178,17 +183,52 @@ export function createGhlWebhookRouter(params: {
     }
 
     if (!telegramUserId && normalized.contactId) {
+      logger.debug({ 
+        contactId: normalized.contactId, 
+        eventType: normalized.eventType 
+      }, "Webhook missing telegram_user_id - attempting contact lookup");
+      
       try {
         telegramUserId = await fetchTelegramUserIdByContactId({ env, contactId: normalized.contactId });
-        logger.info({ telegramUserId, contactId: normalized.contactId }, "Contact lookup result");
+        if (telegramUserId) {
+          logger.info({ telegramUserId, contactId: normalized.contactId }, "Webhook contact lookup successful");
+        } else {
+          logger.warn({ 
+            contactId: normalized.contactId,
+            eventType: normalized.eventType,
+            ghlApiKey: !!env.GHL_API_KEY 
+          }, "Webhook contact lookup returned null - contact may not have telegram_user_id field");
+        }
       } catch (err) {
-        logger.warn({ err, contactId: normalized.contactId }, "Contact lookup failed");
+        logger.error({ 
+          err, 
+          contactId: normalized.contactId,
+          eventType: normalized.eventType,
+          errorMessage: err instanceof Error ? err.message : String(err)
+        }, "Webhook contact lookup failed with exception");
       }
     }
 
     if (!telegramUserId) {
       // MVP-safe: do not grant/revoke access if we can't link the contact to a Telegram user.
-      logger.warn({ idempotencyKey, contactId: normalized.contactId }, "Webhook stored but unlinked (no telegram_user_id)");
+      logger.warn({ 
+        idempotencyKey, 
+        contactId: normalized.contactId,
+        eventType: normalized.eventType,
+        payloadTelegramFields: [
+          payload?.telegram_user_id,
+          payload?.telegramUserId,
+          payload?.contact?.telegram_user_id,
+          payload?.contact?.customFields?.telegram_user_id
+        ].filter(Boolean),
+        troubleshooting: {
+          hasContactId: !!normalized.contactId,
+          hasGhlApiKey: !!env.GHL_API_KEY,
+          suggestion: normalized.contactId 
+            ? "Contact exists but no telegram_user_id field found. Check GHL contact custom fields."
+            : "No contactId in webhook payload. Check webhook configuration."
+        }
+      }, "Webhook stored but unlinked - cannot determine telegram_user_id");
       res.status(200).json({ ok: true, unlinked: true });
       return;
     }
@@ -198,6 +238,19 @@ export function createGhlWebhookRouter(params: {
 
     const prev = getUser(db, telegramUserId);
     const { nextState, reason } = deriveNextState(normalized);
+
+    logger.info({
+      telegramUserId,
+      eventType: normalized.eventType,
+      previousState: prev?.state,
+      derivedState: nextState,
+      derivationReason: reason,
+      webhookFlags: {
+        isActive: normalized.isActive,
+        cancelAtPeriodEnd: normalized.cancelAtPeriodEnd,
+        ended: normalized.ended
+      }
+    }, "Webhook state transition analysis");
 
     if (!nextState) {
       if (reason === "unknown_event") {
