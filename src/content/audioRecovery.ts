@@ -10,20 +10,31 @@ const TELEGRAM_AUDIO_LIMIT_BYTES = 49 * 1024 * 1024; // 50MB limit
  * Tests if a Telegram file_id is still valid by attempting to get file info.
  */
 async function testTelegramFileId(bot: Telegraf, fileId: string): Promise<boolean> {
+  logger.debug({ fileId }, "🧪 Testing Telegram file ID validity");
+  
   try {
-    await bot.telegram.getFile(fileId);
+    const fileInfo = await bot.telegram.getFile(fileId);
+    logger.debug({ fileId, fileSize: fileInfo.file_size }, "✅ File ID test successful - file exists");
     return true;
   } catch (err: any) {
     const errorCode = err?.response?.error_code;
     const description = String(err?.response?.description ?? err?.message ?? "").toLowerCase();
     
+    logger.debug({
+      fileId,
+      errorCode,
+      description,
+      errorMessage: err?.message
+    }, "File ID test returned error");
+    
     // File ID is invalid if we get a 400 error with "wrong file identifier"
     if (errorCode === 400 && description.includes("wrong file identifier")) {
+      logger.warn({ fileId, errorCode, description }, "❌ File ID invalid - wrong file identifier");
       return false;
     }
     
     // Other errors might be temporary, assume valid
-    logger.warn({ err, fileId }, "File ID test returned unexpected error, assuming valid");
+    logger.warn({ err, fileId, errorCode, description }, "⚠️ File ID test returned unexpected error, assuming valid");
     return true;
   }
 }
@@ -32,18 +43,54 @@ async function testTelegramFileId(bot: Telegraf, fileId: string): Promise<boolea
  * Downloads an audio file from Google Drive.
  */
 async function downloadFromGoogleDrive(url: string): Promise<Buffer> {
-  logger.info({ url }, "Downloading audio from Google Drive");
+  logger.info({ url }, "📥 Starting download from Google Drive");
+  const startTime = Date.now();
   
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Google Drive download failed: ${response.status} ${response.statusText}`);
+  try {
+    logger.debug({ url }, "Sending fetch request to Google Drive");
+    const response = await fetch(url);
+    
+    logger.info({
+      url,
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get("content-type"),
+      contentLength: response.headers.get("content-length")
+    }, "Google Drive response received");
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unable to read error response");
+      logger.error({
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        errorText
+      }, "❌ Google Drive download failed");
+      throw new Error(`Google Drive download failed: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+    
+    logger.debug({ url }, "Reading response as array buffer");
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const downloadTime = Date.now() - startTime;
+    
+    logger.info({
+      url,
+      sizeBytes: buffer.length,
+      sizeMB: Math.round((buffer.length / (1024 * 1024)) * 100) / 100,
+      downloadTimeMs: downloadTime
+    }, "✅ Downloaded audio from Google Drive successfully");
+    
+    return buffer;
+  } catch (err: any) {
+    logger.error({
+      err,
+      url,
+      errorMessage: err?.message,
+      stack: err?.stack
+    }, "❌ Google Drive download exception");
+    throw err;
   }
-  
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  
-  logger.info({ url, sizeBytes: buffer.length }, "Downloaded audio from Google Drive");
-  return buffer;
 }
 
 /**
@@ -84,20 +131,53 @@ async function recoverAudioItem(
   item: { id: string; title: string; googleDriveUrl?: string },
   adminChatId: number
 ): Promise<boolean> {
+  logger.info({
+    itemId: item.id,
+    title: item.title,
+    adminChatId,
+    hasGoogleDriveUrl: !!item.googleDriveUrl
+  }, "🔄 Starting recovery for audio item");
+  
   if (!item.googleDriveUrl) {
-    logger.debug({ itemId: item.id }, "No Google Drive URL available for recovery");
+    logger.error({ itemId: item.id }, "❌ No Google Drive URL available for recovery");
     return false;
   }
   
   try {
     // Download from Google Drive
+    logger.info({ itemId: item.id, url: item.googleDriveUrl }, "Step 1: Downloading from Google Drive");
     const audioBuffer = await downloadFromGoogleDrive(item.googleDriveUrl);
     
+    logger.info({
+      itemId: item.id,
+      bufferSize: audioBuffer.length,
+      bufferSizeMB: Math.round((audioBuffer.length / (1024 * 1024)) * 100) / 100
+    }, "Step 2: Download complete, preparing upload");
+    
+    // Check size limit
+    if (audioBuffer.length > TELEGRAM_AUDIO_LIMIT_BYTES) {
+      logger.error({
+        itemId: item.id,
+        sizeBytes: audioBuffer.length,
+        sizeMB: Math.round((audioBuffer.length / (1024 * 1024)) * 100) / 100,
+        limitMB: Math.round((TELEGRAM_AUDIO_LIMIT_BYTES / (1024 * 1024)) * 100) / 100
+      }, "❌ Audio file too large for Telegram");
+      return false;
+    }
+    
     // Upload to Telegram
-    logger.info({ itemId: item.id, title: item.title }, "Uploading recovered audio to Telegram");
+    logger.info({
+      itemId: item.id,
+      title: item.title,
+      adminChatId,
+      sizeBytes: audioBuffer.length
+    }, "Step 3: Uploading to Telegram");
     
     const { Readable } = await import("stream");
     const stream = Readable.from(audioBuffer);
+    
+    logger.debug({ itemId: item.id }, "Created readable stream, sending to Telegram");
+    const uploadStartTime = Date.now();
     
     const message = await bot.telegram.sendAudio(
       adminChatId,
@@ -105,19 +185,52 @@ async function recoverAudioItem(
       { title: item.title }
     );
     
+    const uploadTime = Date.now() - uploadStartTime;
+    logger.info({
+      itemId: item.id,
+      messageId: message.message_id,
+      uploadTimeMs: uploadTime
+    }, "Step 4: Upload to Telegram complete");
+    
     const newFileId = message.audio?.file_id;
+    logger.debug({
+      itemId: item.id,
+      hasAudio: !!message.audio,
+      newFileId: newFileId || "MISSING",
+      audioObject: message.audio ? Object.keys(message.audio) : "NONE"
+    }, "Extracted file ID from Telegram response");
+    
     if (!newFileId) {
-      logger.error({ itemId: item.id }, "Upload succeeded but no file_id returned");
+      logger.error({
+        itemId: item.id,
+        messageKeys: Object.keys(message),
+        hasAudio: !!message.audio,
+        audioKeys: message.audio ? Object.keys(message.audio) : []
+      }, "❌ Upload succeeded but no file_id returned");
       return false;
     }
     
     // Cache the new file ID
+    logger.info({ itemId: item.id, newFileId }, "Step 5: Caching new file ID in database");
     upsertTelegramAudioFileId(db, item.id, newFileId);
-    logger.info({ itemId: item.id, newFileId }, "Audio recovered and cached successfully");
+    
+    logger.info({
+      itemId: item.id,
+      title: item.title,
+      newFileId,
+      totalTimeMs: Date.now() - uploadStartTime
+    }, "✅ Audio recovered and cached successfully");
     
     return true;
   } catch (err: any) {
-    logger.error({ err, itemId: item.id }, "Audio recovery failed");
+    logger.error({
+      err,
+      itemId: item.id,
+      errorMessage: err?.message,
+      errorCode: err?.response?.error_code,
+      errorDescription: err?.response?.description,
+      stack: err?.stack
+    }, "❌ Audio recovery failed with exception");
     return false;
   }
 }
@@ -266,25 +379,39 @@ export async function validateAndRecoverAudio(
     validated,
     recovered,
     failed,
-    skipped: audioItems.length - validated
-  }, "Audio validation and recovery complete");
+    skipped,
+    summary: {
+      totalItems: audioItems.length,
+      itemsWithFileIds: validated,
+      itemsRecovered: recovered,
+      itemsFailed: failed,
+      itemsSkipped: skipped
+    }
+  }, "✅ Audio validation and recovery complete - final summary");
   
   // Notify admins of recovery results
-  if (recovered > 0 || failed > 0) {
+  if (recovered > 0 || failed > 0 || skipped > 0) {
     const message = [
       "🔄 **Audio Recovery Report**",
       "",
+      `📊 Total items: ${audioItems.length}`,
       `✅ Validated: ${validated}`,
       `🔄 Recovered: ${recovered}`,
-      `❌ Failed: ${failed}`
+      `❌ Failed: ${failed}`,
+      `⏭️ Skipped: ${skipped}`
     ].join("\n");
+    
+    logger.info({ message, adminCount: adminChatIds.length }, "Sending recovery report to admins");
     
     for (const adminId of adminChatIds) {
       try {
         await bot.telegram.sendMessage(adminId, message);
+        logger.debug({ adminId }, "Recovery report sent to admin");
       } catch (err) {
-        logger.warn({ err, adminId }, "Failed to notify admin of recovery results");
+        logger.error({ err, adminId, errorMessage: err instanceof Error ? err.message : String(err) }, "❌ Failed to notify admin of recovery results");
       }
     }
+  } else {
+    logger.info("All audio files valid - no recovery needed, no admin notification sent");
   }
 }
