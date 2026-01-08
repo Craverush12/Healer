@@ -616,6 +616,32 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     await ctx.reply("Cleared all cached Telegram file_ids from DB. Re-ingest to populate with the current bot token.");
   });
 
+  // Manual recovery trigger command
+  bot.command("admin_recover_audio", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
+      await ctx.reply("❌ No admin IDs configured. Recovery requires admin chat ID for uploads.");
+      return;
+    }
+
+    await ctx.reply("🔄 Starting manual audio recovery from Google Drive...\n\nThis may take 2-3 minutes for all files.");
+
+    try {
+      const { validateAndRecoverAudio } = await import("../content/audioRecovery");
+      await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+      await ctx.reply("✅ Audio recovery completed! All files should now be available.");
+    } catch (err: any) {
+      logger.error({ err }, "Manual audio recovery failed");
+      await ctx.reply(`❌ Recovery failed: ${err?.message ?? "Unknown error"}\n\nCheck logs for details.`);
+    }
+  });
+
   // Enhanced production upload commands
   bot.command("admin_production_setup", async (ctx) => {
     const telegramUserId = ctx.from?.id;

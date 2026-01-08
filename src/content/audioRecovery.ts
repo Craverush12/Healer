@@ -132,19 +132,33 @@ export async function validateAndRecoverAudio(
   audio: AudioLibrary,
   adminChatIds: number[]
 ): Promise<void> {
+  logger.info({
+    adminChatIdsCount: adminChatIds.length,
+    adminChatIds: adminChatIds,
+    audioItemsCount: audio.manifest.items.length
+  }, "🔄 validateAndRecoverAudio called - entry point");
+  
   if (adminChatIds.length === 0) {
-    logger.warn("No admin chat IDs provided, skipping audio recovery validation");
+    logger.error("❌ No admin chat IDs provided, skipping audio recovery validation");
     return;
   }
   
   const adminChatId = adminChatIds[0]; // Use first admin for uploads
+  logger.info({ adminChatId, totalAdmins: adminChatIds.length }, "Using admin chat ID for uploads");
   
-  logger.info("Starting audio file ID validation and recovery");
+  logger.info("🔄 Starting audio file ID validation and recovery");
   
   const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
+  logger.info({
+    totalItems: audio.manifest.items.length,
+    audioItemsCount: audioItems.length,
+    audioItemIds: audioItems.map(i => i.id)
+  }, "Filtered audio items for recovery");
+  
   let validated = 0;
   let recovered = 0;
   let failed = 0;
+  let skipped = 0;
   
   for (const item of audioItems) {
     const cachedFileId = getTelegramAudioFileId(db, item.id);

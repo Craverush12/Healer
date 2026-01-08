@@ -140,32 +140,40 @@ async function main() {
       // Ensure we are in polling mode and not blocked by a lingering webhook.
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       await bot.launch();
-      logger.info("Telegram bot launched");
+      logger.info("Telegram bot launched successfully");
       
       // Notify admin of successful restart (optional)
       if (env.ADMIN_TELEGRAM_USER_IDS && env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
         try {
           const restartTime = new Date().toISOString();
+          logger.info({ adminIds: env.ADMIN_TELEGRAM_USER_IDS }, "Sending restart notification to admins");
           for (const adminId of env.ADMIN_TELEGRAM_USER_IDS) {
             await bot.telegram.sendMessage(
               adminId, 
               `🟢 Bot restarted successfully\nTime: ${restartTime}\nStatus: All systems operational`
             );
           }
+          logger.info("Admin restart notifications sent");
         } catch (notifyErr) {
           logger.warn({ notifyErr }, "Failed to notify admin of restart");
         }
       }
       
-      // Start audio recovery validation in background (after 10 seconds delay)
+      // Start audio recovery validation in background (after 15 seconds delay to ensure bot is fully ready)
+      logger.info({ delaySeconds: 15, adminCount: env.ADMIN_TELEGRAM_USER_IDS.length }, "Scheduling audio recovery validation");
       setTimeout(async () => {
         try {
-          logger.info("Starting background audio recovery validation");
+          logger.info("🔄 Starting background audio recovery validation");
+          if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
+            logger.warn("No admin IDs configured - audio recovery requires admin chat ID for uploads");
+            return;
+          }
           await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+          logger.info("✅ Audio recovery validation completed");
         } catch (err: any) {
-          logger.error({ err }, "Audio recovery validation failed");
+          logger.error({ err, stack: err?.stack }, "❌ Audio recovery validation failed with error");
         }
-      }, 10000); // 10 second delay to ensure bot is fully ready
+      }, 15000); // 15 second delay to ensure bot is fully ready
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
       logger.error("Possible causes:");
