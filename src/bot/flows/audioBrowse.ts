@@ -27,6 +27,69 @@ async function safeAnswerCallback(ctx: Context) {
   }
 }
 
+function isWrongFileIdentifier(err: any): boolean {
+  const code = err?.response?.error_code;
+  const desc = String(err?.response?.description ?? err?.message ?? "").toLowerCase();
+  return code === 400 && desc.includes("wrong file identifier");
+}
+
+async function sendAudioFromFile(params: {
+  ctx: Context;
+  item: any;
+  caption?: string;
+  itemId: string;
+  missingMessage: string;
+  logContext?: Record<string, unknown>;
+}): Promise<boolean> {
+  const { ctx, item, caption, itemId, missingMessage, logContext } = params;
+
+  if (!item.filePath) {
+    logger.warn({ itemId, ...logContext }, "No local filePath for audio item");
+    await ctx.reply(missingMessage);
+    return false;
+  }
+
+  let loadingMessage: any;
+  try {
+    loadingMessage = await ctx.reply("Loading audio...");
+  } catch (err: any) {
+    logger.warn({ err }, "Failed to send loading message");
+  }
+
+  try {
+    const filePath = resolveAudioFilePath(item.filePath);
+    try {
+      const stats = fs.statSync(filePath);
+      if (stats.size > TELEGRAM_AUDIO_LIMIT_BYTES) {
+        const sizeMb = Math.ceil(stats.size / (1024 * 1024));
+        await ctx.reply(`"${item.title}" is too large for Telegram (${sizeMb} MB).`);
+        logger.warn({ itemId, sizeMb, ...logContext }, "Audio file too large for Telegram");
+        return false;
+      }
+    } catch (statErr: any) {
+      logger.warn({ err: statErr, itemId, filePath: item.filePath }, "Failed to stat audio file");
+    }
+
+    // Typings omit "upload_audio"; use upload_document to show upload activity
+    await ctx.sendChatAction("upload_document");
+    await ctx.replyWithAudio({ source: fs.createReadStream(filePath) }, { title: item.title, caption });
+    logger.info({ itemId, ...logContext }, "Audio sent from local file");
+    return true;
+  } catch (err: any) {
+    logger.error({ err, itemId, filePath: item.filePath, ...logContext }, "Failed to send audio file");
+    await ctx.reply(`Sorry, "${item.title}" is not available right now.`);
+    return false;
+  } finally {
+    if (loadingMessage) {
+      try {
+        await ctx.deleteMessage(loadingMessage.message_id);
+      } catch (err: any) {
+        logger.warn({ err }, "Failed to delete loading message");
+      }
+    }
+  }
+}
+
 export async function showCategories(params: { ctx: Context; db: SqliteDb; audio: AudioLibrary }) {
   const { ctx, db, audio } = params;
   const telegramUserId = ctx.from?.id;
@@ -193,8 +256,28 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
         try {
           await ctx.replyWithAudio(fileIdToUse, { title: item.title, caption });
         } catch (err: any) {
-          logger.error({ err, itemId, fileIdToUse }, "Failed to send audio by file_id");
-          if (err?.response?.error_code === 413) {
+          const errorCode = err?.response?.error_code ?? null;
+          const description = err?.response?.description ?? err?.message ?? null;
+          logger.error(
+            { err, itemId, fileIdToUse, errorCode, description },
+            "Failed to send audio by file_id"
+          );
+          if (isWrongFileIdentifier(err)) {
+            logger.warn({ itemId, fileIdToUse }, "Invalid Telegram file_id; attempting local file fallback");
+            const ok = await sendAudioFromFile({
+              ctx,
+              item,
+              caption,
+              itemId,
+              missingMessage: "Audio not available yet, admin needs to ingest it.",
+              logContext: { fallback: "local_file", fileIdToUse }
+            });
+            if (!ok) {
+              logger.warn({ itemId, fileIdToUse }, "Fallback to local file failed or missing; ingest required");
+            }
+            return;
+          }
+          if (errorCode === 413) {
             await ctx.reply(`"${item.title}" is too large for Telegram to send.`);
           } else {
             await ctx.reply(`Sorry, "${item.title}" is not available right now.`);
@@ -203,46 +286,14 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
         return;
       }
 
-      if (!item.filePath) {
-        await ctx.reply(`Sorry, "${item.title}" is not available yet.`);
-        return;
-      }
-
-      let loadingMessage: any;
-      try {
-        loadingMessage = await ctx.reply("Loading audio…");
-      } catch (err: any) {
-        logger.warn({ err }, "Failed to send loading message");
-      }
-
-      try {
-        const filePath = resolveAudioFilePath(item.filePath);
-        try {
-          const stats = fs.statSync(filePath);
-          if (stats.size > TELEGRAM_AUDIO_LIMIT_BYTES) {
-            const sizeMb = Math.ceil(stats.size / (1024 * 1024));
-            await ctx.reply(`"${item.title}" is too large for Telegram (${sizeMb} MB).`);
-            return;
-          }
-        } catch (statErr: any) {
-          logger.warn({ err: statErr, itemId, filePath: item.filePath }, "Failed to stat audio file");
-        }
-
-        // Typings omit "upload_audio"; use upload_document to show upload activity
-        await ctx.sendChatAction("upload_document");
-        await ctx.replyWithAudio({ source: fs.createReadStream(filePath) }, { title: item.title, caption });
-      } catch (err: any) {
-        logger.error({ err, itemId, filePath: item.filePath }, "Failed to send audio file");
-        await ctx.reply(`Sorry, "${item.title}" is not available right now.`);
-      } finally {
-        if (loadingMessage) {
-          try {
-            await ctx.deleteMessage(loadingMessage.message_id);
-          } catch (err: any) {
-            logger.warn({ err }, "Failed to delete loading message");
-          }
-        }
-      }
+      await sendAudioFromFile({
+        ctx,
+        item,
+        caption,
+        itemId,
+        missingMessage: `Sorry, "${item.title}" is not available yet.`,
+        logContext: { fallback: "local_file" }
+      });
       return;
     }
 

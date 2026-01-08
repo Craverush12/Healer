@@ -30,6 +30,7 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
   const { env, db, audio } = params;
 
   const bot = new Telegraf(env.BOT_TOKEN);
+  const pendingIngest = new Map<number, string>();
 
   bot.start(async (ctx) => {
     try {
@@ -94,31 +95,51 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
       await ctx.reply("This item is not an audio file.");
       return;
     }
-    if (!item.filePath) {
-      await ctx.reply(`Item has no filePath: ${itemId}`);
-      return;
-    }
+
+    pendingIngest.set(telegramUserId, itemId);
+    logger.info({ telegramUserId, itemId }, "Admin ingest requested; awaiting audio upload");
 
     const existing = getTelegramAudioFileId(db, itemId);
-    if (existing) {
-      await ctx.reply("Already cached for this item.");
-      return;
-    }
-    if (item.telegramFileId) {
-      await ctx.reply("Already has telegramFileId in manifest. Use that in production or clear it before re-ingesting.");
+    const manifestFileId = item.telegramFileId;
+    const notice =
+      existing || manifestFileId
+        ? "Note: existing file_id will be replaced."
+        : "No existing file_id found for this item.";
+
+    await ctx.reply(
+      [
+        `Send the MP3 for "${item.title}" now as an AUDIO upload (not document/voice).`,
+        notice
+      ].join("\n")
+    );
+  });
+
+  bot.on("audio", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) return;
+
+    const itemId = pendingIngest.get(telegramUserId);
+    if (!itemId) return;
+
+    const item = audio.itemsById.get(itemId);
+    if (!item || (item.type && item.type !== "audio")) {
+      pendingIngest.delete(telegramUserId);
+      await ctx.reply("Pending ingest item is invalid or not an audio file.");
       return;
     }
 
-    const fullPath = resolveAudioFilePath(item.filePath);
-    await ctx.reply(`Uploading: ${item.title}`);
-    const msg: any = await ctx.replyWithAudio({ source: fs.createReadStream(fullPath) }, { title: item.title });
-    const telegramFileId: string | undefined = msg?.audio?.file_id;
+    const audioMsg: any = (ctx.message as any)?.audio;
+    const telegramFileId: string | undefined = audioMsg?.file_id;
     if (!telegramFileId) {
-      await ctx.reply("Upload succeeded but could not extract telegram file_id.");
+      await ctx.reply("Could not read file_id from the audio message.");
       return;
     }
 
     upsertTelegramAudioFileId(db, itemId, telegramFileId);
+    pendingIngest.delete(telegramUserId);
+    logger.info({ telegramUserId, itemId, telegramFileId }, "Admin ingest stored file_id");
+
     await ctx.reply(
       [
         `Cached file_id for ${itemId}.`,
@@ -127,6 +148,22 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
         `"telegramFileId": "${telegramFileId}"`
       ].join("\n")
     );
+  });
+
+  bot.on("voice", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) return;
+    if (!pendingIngest.has(telegramUserId)) return;
+    await ctx.reply("Please upload the MP3 as an audio file (not voice).");
+  });
+
+  bot.on("document", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) return;
+    if (!pendingIngest.has(telegramUserId)) return;
+    await ctx.reply("Please upload the MP3 as an audio file (not document).");
   });
 
   bot.command("admin_missing_file_ids", async (ctx) => {
