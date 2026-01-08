@@ -26,6 +26,8 @@ import { handleSubscribe } from "./flows/subscribe";
 import { MENU_LABELS, buildMainMenuKeyboard, renderHelpText } from "./menus";
 import { findContactByTelegramUserId, getResolvedLocationId, getSubscriptionStatusForContact } from "../ghl/ghlClient";
 
+const TELEGRAM_AUDIO_LIMIT_BYTES = 49 * 1024 * 1024; // Slightly under Telegram's 50MB cap for bots
+
 function hasAudioAccess(state: string | null | undefined): boolean {
   return state === "ACTIVE_SUBSCRIBER" || state === "CANCEL_PENDING";
 }
@@ -505,38 +507,67 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
     }
 
     if (missing.length === 0) {
-      await ctx.reply("All audio items have cached Telegram file_ids.");
+      await ctx.reply("✅ All audio items have cached Telegram file_ids.");
       return;
     }
 
-    await ctx.reply(`Ingesting ${missing.length} item(s)...`);
+    await ctx.reply(`🔄 Starting bulk ingest: ${missing.length} item(s)...\n\n⚠️ Note: This may take several minutes. Each file will be uploaded to Telegram and cached.`);
+
+    let successful = 0;
+    let failed = 0;
 
     for (const itemId of missing) {
       const item = audio.itemsById.get(itemId);
-      if (!item || item.type === "external") continue;
+      if (!item || item.type === "external") {
+        await ctx.reply(`⏭️ Skipping ${itemId} (external/invalid type)`);
+        continue;
+      }
       if (!item.filePath) {
-        await ctx.reply(`Skipping ${itemId} (no filePath).`);
+        await ctx.reply(`⏭️ Skipping ${itemId} (no filePath)`);
+        failed++;
         continue;
       }
 
       try {
         const fullPath = resolveAudioFilePath(item.filePath);
-        await ctx.reply(`Uploading: ${item.title}`);
-        const msg: any = await ctx.replyWithAudio({ source: fs.createReadStream(fullPath) }, { title: item.title });
-        const telegramFileId: string | undefined = msg?.audio?.file_id;
-        if (!telegramFileId) {
-          await ctx.reply(`Upload ok but could not extract file_id for ${itemId}.`);
+        
+        // Check file size before upload
+        const stats = fs.statSync(fullPath);
+        const sizeMb = Math.ceil(stats.size / (1024 * 1024));
+        
+        if (stats.size > TELEGRAM_AUDIO_LIMIT_BYTES) {
+          await ctx.reply(`❌ ${item.title}: Too large (${sizeMb}MB) - Skipping`);
+          failed++;
           continue;
         }
+
+        await ctx.reply(`📤 Uploading: ${item.title} (${sizeMb}MB)...`);
+        await ctx.sendChatAction("upload_document");
+        
+        const msg: any = await ctx.replyWithAudio({ source: fs.createReadStream(fullPath) }, { title: item.title });
+        const telegramFileId: string | undefined = msg?.audio?.file_id;
+        
+        if (!telegramFileId) {
+          await ctx.reply(`❌ ${itemId}: Upload succeeded but no file_id extracted`);
+          failed++;
+          continue;
+        }
+        
         upsertTelegramAudioFileId(db, itemId, telegramFileId);
-        await ctx.reply(`Cached file_id for ${itemId}: "telegramFileId": "${telegramFileId}"`);
+        successful++;
+        await ctx.reply(`✅ ${item.title}: Cached successfully`);
+        
+        // Small delay to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
       } catch (err: any) {
         logger.error({ err, itemId }, "Auto-ingest failed");
-        await ctx.reply(`Failed to ingest ${itemId}: ${err?.message ?? err}`);
+        await ctx.reply(`❌ ${item.title}: ${err?.message ?? "Upload failed"}`);
+        failed++;
       }
     }
 
-    await ctx.reply("Auto-ingest complete.");
+    await ctx.reply(`🎉 Bulk ingest complete!\n\n✅ Successful: ${successful}\n❌ Failed: ${failed}\n\nAll successful files are now cached and will work even after server restarts.`);
   });
 
   bot.command("admin_export_manifest_ids", async (ctx) => {
@@ -583,6 +614,138 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
 
     clearTelegramAudioFileIds(db);
     await ctx.reply("Cleared all cached Telegram file_ids from DB. Re-ingest to populate with the current bot token.");
+  });
+
+  // Enhanced production upload commands
+  bot.command("admin_production_setup", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    const allItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
+    const cached = allItems.filter(item => {
+      const dbFileId = getTelegramAudioFileId(db, item.id);
+      const manifestFileId = item.telegramFileId;
+      return !!(dbFileId || manifestFileId);
+    });
+    const missing = allItems.filter(item => {
+      const dbFileId = getTelegramAudioFileId(db, item.id);
+      const manifestFileId = item.telegramFileId;
+      return !(dbFileId || manifestFileId);
+    });
+
+    const report = [
+      "🎛️ **PRODUCTION SETUP STATUS**",
+      "",
+      `📊 **Overview:**`,
+      `• Total audio items: ${allItems.length}`,
+      `• Ready for production: ${cached.length}`,
+      `• Need upload: ${missing.length}`,
+      ""
+    ];
+
+    if (cached.length > 0) {
+      report.push("✅ **Ready items:**");
+      cached.forEach(item => {
+        const dbFileId = getTelegramAudioFileId(db, item.id);
+        const source = dbFileId ? "DB" : "Manifest";
+        report.push(`• ${item.title} (${source})`);
+      });
+      report.push("");
+    }
+
+    if (missing.length > 0) {
+      report.push("❌ **Need upload:**");
+      missing.forEach(item => {
+        try {
+          const fullPath = resolveAudioFilePath(item.filePath);
+          const stats = fs.statSync(fullPath);
+          const sizeMb = Math.ceil(stats.size / (1024 * 1024));
+          const status = stats.size > TELEGRAM_AUDIO_LIMIT_BYTES ? "TOO LARGE" : "Ready";
+          report.push(`• ${item.title} (${sizeMb}MB - ${status})`);
+        } catch {
+          report.push(`• ${item.title} (FILE MISSING)`);
+        }
+      });
+      report.push("");
+      report.push("💡 **Next step:** Run `/admin_ingest_missing` to upload all ready files.");
+    } else {
+      report.push("🎉 **All audio files ready for production!**");
+      report.push("");
+      report.push("Your bot can now survive server restarts - all audio will work from cached Telegram file_ids.");
+    }
+
+    await ctx.reply(report.join("\n"));
+  });
+
+  // Force re-upload command for specific items  
+  bot.command("admin_force_upload", async (ctx) => {
+    const telegramUserId = ctx.from?.id;
+    if (!telegramUserId) return;
+    if (!isAdmin(env, telegramUserId)) {
+      await ctx.reply("Unauthorized.");
+      return;
+    }
+
+    const text = (ctx.message as any)?.text ?? "";
+    const parts = String(text).trim().split(/\s+/);
+    const itemId = parts[1];
+    
+    if (!itemId) {
+      await ctx.reply("Usage: `/admin_force_upload <itemId>`\n\nUse `/admin_production_setup` to see available item IDs.");
+      return;
+    }
+
+    const item = audio.itemsById.get(itemId);
+    if (!item) {
+      await ctx.reply(`❌ Unknown item: ${itemId}`);
+      return;
+    }
+
+    if (item.type === "external") {
+      await ctx.reply(`❌ ${itemId} is external - cannot upload`);
+      return;
+    }
+
+    if (!item.filePath) {
+      await ctx.reply(`❌ ${itemId} has no filePath`);
+      return;
+    }
+
+    try {
+      const fullPath = resolveAudioFilePath(item.filePath);
+      const stats = fs.statSync(fullPath);
+      const sizeMb = Math.ceil(stats.size / (1024 * 1024));
+      
+      if (stats.size > TELEGRAM_AUDIO_LIMIT_BYTES) {
+        await ctx.reply(`❌ ${item.title}: Too large (${sizeMb}MB) for Telegram`);
+        return;
+      }
+
+      const existing = getTelegramAudioFileId(db, item.id);
+      const warning = existing ? "\n⚠️ Will replace existing cached file_id" : "";
+      
+      await ctx.reply(`🔄 Force uploading: ${item.title} (${sizeMb}MB)${warning}`);
+      await ctx.sendChatAction("upload_document");
+      
+      const msg: any = await ctx.replyWithAudio({ source: fs.createReadStream(fullPath) }, { title: item.title });
+      const telegramFileId: string | undefined = msg?.audio?.file_id;
+      
+      if (!telegramFileId) {
+        await ctx.reply(`❌ Upload succeeded but no file_id extracted`);
+        return;
+      }
+      
+      upsertTelegramAudioFileId(db, itemId, telegramFileId);
+      await ctx.reply(`✅ ${item.title}: Force upload complete\n\nNew file_id: \`${telegramFileId}\``);
+      
+    } catch (err: any) {
+      logger.error({ err, itemId }, "Force upload failed");
+      await ctx.reply(`❌ Force upload failed: ${err?.message ?? "Unknown error"}`);
+    }
   });
 
   bot.hears(MENU_LABELS.help, async (ctx) => {
