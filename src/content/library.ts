@@ -19,6 +19,7 @@ const ItemSchema = z.object({
   filePath: z.string().optional(), // Optional for external links
   url: z.string().url().optional(), // For external links (Spotify, etc.)
   telegramFileId: z.string().optional(), // Optional: cached Telegram file_id, lets us avoid local files in production
+  googleDriveUrl: z.string().url().optional(), // Google Drive direct download URL for auto-recovery
   description: z.string().optional(),
   duration: z.string().optional(), // e.g., "15 min", "8 hours"
   recommended: z.boolean().optional(), // "Start Here" flag

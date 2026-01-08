@@ -11,6 +11,7 @@ import { loadAudioLibrary } from "./content/library";
 import { createBot } from "./bot/bot";
 import { getSampleCheckoutUrl } from "./bot/flows/subscribe";
 import { initGhlClient } from "./ghl/ghlClient";
+import { validateAndRecoverAudio } from "./content/audioRecovery";
 
 async function main() {
   const env = loadEnv(process.env);
@@ -155,6 +156,16 @@ async function main() {
           logger.warn({ notifyErr }, "Failed to notify admin of restart");
         }
       }
+      
+      // Start audio recovery validation in background (after 10 seconds delay)
+      setTimeout(async () => {
+        try {
+          logger.info("Starting background audio recovery validation");
+          await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+        } catch (err: any) {
+          logger.error({ err }, "Audio recovery validation failed");
+        }
+      }, 10000); // 10 second delay to ensure bot is fully ready
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");
       logger.error("Possible causes:");
