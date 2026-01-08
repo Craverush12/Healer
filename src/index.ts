@@ -136,6 +136,18 @@ async function main() {
   // Launch bot after HTTP server is listening so container port is bound even if Telegram hangs.
   (async () => {
     try {
+      logger.info("🚀 Starting bot launch sequence");
+      
+      // Test if recovery module can be imported
+      try {
+        const recoveryModule = await import("./content/audioRecovery");
+        logger.info({ 
+          hasValidateAndRecoverAudio: typeof recoveryModule.validateAndRecoverAudio === "function"
+        }, "✅ Audio recovery module imported successfully");
+      } catch (importErr: any) {
+        logger.error({ importErr, errorMessage: importErr?.message }, "❌ Failed to import audio recovery module");
+      }
+      
       logger.info("Launching Telegram bot");
       // Ensure we are in polling mode and not blocked by a lingering webhook.
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
