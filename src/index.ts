@@ -148,11 +148,18 @@ async function main() {
   // Launch bot after HTTP server is listening so container port is bound even if Telegram hangs.
   (async () => {
     try {
-      logger.info("Launching Telegram bot");
+      logger.info("=".repeat(60));
+      logger.info("🚀 STARTING BOT LAUNCH SEQUENCE");
+      logger.info("=".repeat(60));
+      logger.info("Step 1: Deleting webhook...");
       // Ensure we are in polling mode and not blocked by a lingering webhook.
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      logger.info("Step 2: Webhook deleted, launching bot...");
       await bot.launch();
-      logger.info("Telegram bot launched successfully");
+      logger.info("=".repeat(60));
+      logger.info("✅ Telegram bot launched successfully");
+      logger.info("=".repeat(60));
+      logger.info("Step 3: Bot launch complete, continuing with setup...");
       
       // Notify admin of successful restart (optional)
       if (env.ADMIN_TELEGRAM_USER_IDS && env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
@@ -173,16 +180,20 @@ async function main() {
       
       // Always re-upload audio from Google Drive on startup (after 15 seconds delay to ensure bot is fully ready)
       // This ensures fresh file_ids after each deployment
+      logger.info("Step 4: Setting up audio upload from Google Drive...");
       const audioItemsForUpload = audio.manifest.items.filter(item => !item.type || item.type === "audio");
       const itemsWithGoogleDrive = audioItemsForUpload.filter(item => item.googleDriveUrl);
       
+      logger.info("=".repeat(60));
+      logger.info("🔍 AUDIO UPLOAD CHECK: Checking configuration for automatic audio upload");
+      logger.info("=".repeat(60));
       logger.info({ 
         hasAdminIds: env.ADMIN_TELEGRAM_USER_IDS.length > 0,
         adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
         adminIds: env.ADMIN_TELEGRAM_USER_IDS,
         itemsWithGoogleDrive: itemsWithGoogleDrive.length,
         totalAudioItems: audioItemsForUpload.length
-      }, "🔍 AUDIO UPLOAD CHECK: Checking configuration for automatic audio upload");
+      }, "Configuration check");
       
       if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
         logger.error("❌ ADMIN_TELEGRAM_USER_IDS is NOT SET in .env file!");
