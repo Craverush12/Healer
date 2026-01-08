@@ -29,6 +29,7 @@ const EnvSchema = z.object({
   // Optional read-only contact lookup fallback.
   GHL_API_BASE_URL: z.string().default("https://services.leadconnectorhq.com"),
   GHL_API_KEY: z.string().optional(),
+  GHL_LOCATION_ID: z.string().optional(),
 
   // Optional admin list (comma-separated Telegram numeric user ids).
   // Used for admin-only ingest commands that cache Telegram file_ids.

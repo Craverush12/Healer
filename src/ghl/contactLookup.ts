@@ -43,7 +43,8 @@ export async function fetchTelegramUserIdByContactId(params: {
     method: "GET",
     headers: {
       Authorization: `Bearer ${env.GHL_API_KEY}`,
-      Accept: "application/json"
+      Accept: "application/json",
+      Version: "2021-07-28"
     }
   });
 

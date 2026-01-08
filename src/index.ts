@@ -10,6 +10,7 @@ import { SCHEMA_SQL } from "./db/schema";
 import { loadAudioLibrary } from "./content/library";
 import { createBot } from "./bot/bot";
 import { getSampleCheckoutUrl } from "./bot/flows/subscribe";
+import { initGhlClient } from "./ghl/ghlClient";
 
 async function main() {
   const env = loadEnv(process.env);
@@ -25,6 +26,8 @@ async function main() {
 
     if (!env.GHL_API_KEY) {
       logger.warn("GHL_API_KEY missing; resync disabled, webhook-only mode.");
+    } else {
+      await initGhlClient(env);
     }
   }
 

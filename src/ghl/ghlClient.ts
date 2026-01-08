@@ -21,6 +21,14 @@ type SubscriptionStatus = {
   count: number;
 };
 
+type LocationInfo = {
+  id: string;
+  name?: string;
+};
+
+let cachedLocationId: string | null = null;
+let locationInitPromise: Promise<string | null> | null = null;
+
 function getBaseUrl(env: Env): string {
   return env.GHL_API_BASE_URL.replace(/\/$/, "");
 }
@@ -29,8 +37,94 @@ function getAuthHeaders(env: Env) {
   return {
     Authorization: `Bearer ${env.GHL_API_KEY}`,
     Accept: "application/json",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    Version: "2021-07-28"
   };
+}
+
+function getRequestLogMeta(params: { url: string; env: Env; locationId?: string | null }) {
+  let path = params.url;
+  try {
+    path = new URL(params.url).pathname;
+  } catch {
+    // ignore
+  }
+  const hasBearer = !!params.env.GHL_API_KEY && params.env.GHL_API_KEY.trim().length > 0;
+  const hasLocationId = !!params.locationId && params.locationId.trim().length > 0;
+  return { path, hasBearer, hasLocationId };
+}
+
+function extractLocationId(location: any): string | null {
+  const id = location?.id ?? location?._id ?? null;
+  return typeof id === "string" && id.trim().length > 0 ? id : null;
+}
+
+function extractLocations(payload: any): LocationInfo[] {
+  if (!payload) return [];
+  if (Array.isArray(payload.locations)) return payload.locations;
+  if (Array.isArray(payload?.data?.locations)) return payload.data.locations;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+async function fetchLocationIdFromApi(env: Env): Promise<string | null> {
+  const base = getBaseUrl(env);
+  const endpoints = [
+    `${base}/me/locations`,
+    `${base}/users/me/locations`,
+    `${base}/locations`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: getAuthHeaders(env)
+      });
+
+      if (!resp.ok) {
+        logger.warn({ status: resp.status, ...getRequestLogMeta({ url, env }) }, "GHL location fetch failed");
+        continue;
+      }
+
+      const json = (await resp.json()) as any;
+      const locations = extractLocations(json);
+      if (locations.length === 0) continue;
+      const locationId = extractLocationId(locations[0]);
+      if (locationId) return locationId;
+    } catch (err) {
+      logger.warn({ err, ...getRequestLogMeta({ url, env }) }, "GHL location fetch error");
+    }
+  }
+
+  return null;
+}
+
+export async function initGhlClient(env: Env) {
+  if (!env.GHL_API_KEY) return null;
+  if (env.GHL_LOCATION_ID && env.GHL_LOCATION_ID.trim().length > 0) {
+    cachedLocationId = env.GHL_LOCATION_ID.trim();
+    return cachedLocationId;
+  }
+  if (locationInitPromise) return locationInitPromise;
+
+  locationInitPromise = (async () => {
+    const locationId = await fetchLocationIdFromApi(env);
+    if (locationId) {
+      cachedLocationId = locationId;
+      logger.info({ locationId }, "GHL locationId detected at startup");
+    } else {
+      logger.warn("GHL locationId not detected; API calls may require GHL_LOCATION_ID.");
+    }
+    return cachedLocationId;
+  })();
+
+  return locationInitPromise;
+}
+
+function resolveLocationId(env: Env): string | null {
+  if (env.GHL_LOCATION_ID && env.GHL_LOCATION_ID.trim().length > 0) return env.GHL_LOCATION_ID.trim();
+  return cachedLocationId;
 }
 
 function extractContactId(contact: any): string | null {
@@ -54,9 +148,11 @@ export async function findContactByTelegramUserId(params: {
   if (!env.GHL_API_KEY) return null;
 
   const url = `${getBaseUrl(env)}/contacts/search`;
+  const locationId = resolveLocationId(env);
   const body = {
     query: String(telegramUserId),
-    pageLimit: 1
+    pageLimit: 1,
+    ...(locationId ? { locationId } : {})
   };
 
   try {
@@ -67,7 +163,10 @@ export async function findContactByTelegramUserId(params: {
     });
 
     if (!resp.ok) {
-      logger.warn({ status: resp.status }, "GHL contact search failed");
+      logger.warn(
+        { status: resp.status, ...getRequestLogMeta({ url, env, locationId }) },
+        "GHL contact search failed"
+      );
       return null;
     }
 
@@ -81,7 +180,7 @@ export async function findContactByTelegramUserId(params: {
 
     return { contactId, contact };
   } catch (err) {
-    logger.warn({ err }, "GHL contact search error");
+    logger.warn({ err, ...getRequestLogMeta({ url, env, locationId }) }, "GHL contact search error");
     return null;
   }
 }
@@ -127,7 +226,7 @@ async function fetchSubscriptions(env: Env, url: string): Promise<SubscriptionSt
     });
 
     if (!resp.ok) {
-      logger.warn({ status: resp.status, url }, "GHL subscription fetch failed");
+      logger.warn({ status: resp.status, ...getRequestLogMeta({ url, env }) }, "GHL subscription fetch failed");
       return null;
     }
 
@@ -148,7 +247,7 @@ async function fetchSubscriptions(env: Env, url: string): Promise<SubscriptionSt
       count: subs.length
     };
   } catch (err) {
-    logger.warn({ err, url }, "GHL subscription fetch error");
+    logger.warn({ err, ...getRequestLogMeta({ url, env }) }, "GHL subscription fetch error");
     return null;
   }
 }
@@ -161,9 +260,11 @@ export async function getSubscriptionStatusForContact(params: {
   if (!env.GHL_API_KEY) return null;
 
   const base = getBaseUrl(env);
+  const locationId = resolveLocationId(env);
+  const locationParam = locationId ? `&locationId=${encodeURIComponent(locationId)}` : "";
   const endpoints = [
-    `${base}/subscriptions?contactId=${encodeURIComponent(contactId)}`,
-    `${base}/payments/subscriptions?contactId=${encodeURIComponent(contactId)}`
+    `${base}/subscriptions?contactId=${encodeURIComponent(contactId)}${locationParam}`,
+    `${base}/payments/subscriptions?contactId=${encodeURIComponent(contactId)}${locationParam}`
   ];
 
   for (const url of endpoints) {

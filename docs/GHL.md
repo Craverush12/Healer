@@ -69,6 +69,7 @@ If your webhook payload does not include `telegram_user_id` but does include `co
 To enable:
 - `GHL_API_KEY` (read-only is sufficient)
 - `GHL_API_BASE_URL` (default is `https://services.leadconnectorhq.com`)
+- `GHL_LOCATION_ID` (optional; if omitted, the service attempts to detect it at startup via the `me/locations` endpoint)
 
 If not set, the backend will store the event as “unlinked” and will not grant/revoke access.
 
@@ -83,9 +84,10 @@ To enable resync:
 - Set:
   - `GHL_API_KEY`
   - `GHL_API_BASE_URL` (default)
+  - `GHL_LOCATION_ID` (optional; required in some tenants)
   - `RESYNC_COOLDOWN_MINUTES` (default 10)
 
-Note: GHL subscription APIs can vary by tenant. If the subscription endpoint differs, update `src/ghl/ghlClient.ts` accordingly.
+Note: LeadConnector API calls include `Version: 2021-07-28`. Subscription APIs can vary by tenant; if the endpoint differs, update `src/ghl/ghlClient.ts` accordingly.
 
 ## Manual test checklist
 
