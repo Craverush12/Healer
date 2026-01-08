@@ -161,53 +161,103 @@ export async function validateAndRecoverAudio(
   let skipped = 0;
   
   for (const item of audioItems) {
+    logger.info({
+      itemId: item.id,
+      title: item.title,
+      hasGoogleDriveUrl: !!item.googleDriveUrl,
+      googleDriveUrl: item.googleDriveUrl || "NOT SET"
+    }, `📋 Processing audio item: ${item.id}`);
+    
     const cachedFileId = getTelegramAudioFileId(db, item.id);
     const manifestFileId = item.telegramFileId;
     const fileIdToTest = cachedFileId ?? manifestFileId;
     
+    logger.debug({
+      itemId: item.id,
+      cachedFileId: cachedFileId || "NONE",
+      manifestFileId: manifestFileId || "NONE",
+      fileIdToTest: fileIdToTest || "NONE"
+    }, "File ID lookup results");
+    
     // Case 1: No file ID at all - recover from Google Drive if available
     if (!fileIdToTest) {
+      logger.info({ itemId: item.id, title: item.title }, "⚠️ No file ID found for item");
+      
       if (item.googleDriveUrl) {
-        logger.info({ itemId: item.id, title: item.title }, "No file ID found, recovering from Google Drive");
-        const success = await recoverAudioItem(bot, db, item, adminChatId);
-        if (success) {
-          recovered++;
-        } else {
+        logger.info({ 
+          itemId: item.id, 
+          title: item.title,
+          googleDriveUrl: item.googleDriveUrl 
+        }, "✅ Google Drive URL available - starting recovery");
+        
+        try {
+          const success = await recoverAudioItem(bot, db, item, adminChatId);
+          if (success) {
+            recovered++;
+            logger.info({ itemId: item.id }, "✅ Recovery successful");
+          } else {
+            failed++;
+            logger.error({ itemId: item.id }, "❌ Recovery failed");
+          }
+        } catch (err: any) {
           failed++;
+          logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Recovery threw exception");
         }
+        
         // Small delay to avoid rate limits
+        logger.debug({ itemId: item.id }, "Waiting 2 seconds before next item");
         await new Promise(resolve => setTimeout(resolve, 2000));
       } else {
-        logger.debug({ itemId: item.id }, "No file ID and no Google Drive URL - skipping");
+        skipped++;
+        logger.warn({ itemId: item.id }, "❌ No file ID and no Google Drive URL - cannot recover");
       }
       continue;
     }
     
     // Case 2: File ID exists - validate it
     validated++;
-    logger.debug({ itemId: item.id, fileId: fileIdToTest }, "Validating file ID");
+    logger.info({ itemId: item.id, fileId: fileIdToTest }, "🔍 File ID exists - validating");
     
-    const isValid = await testTelegramFileId(bot, fileIdToTest);
-    
-    if (!isValid) {
-      logger.warn({ itemId: item.id, fileId: fileIdToTest }, "File ID invalid, attempting recovery from Google Drive");
+    try {
+      const isValid = await testTelegramFileId(bot, fileIdToTest);
+      logger.info({ itemId: item.id, fileId: fileIdToTest, isValid }, "File ID validation result");
       
-      if (item.googleDriveUrl) {
-        const success = await recoverAudioItem(bot, db, item, adminChatId);
-        if (success) {
-          recovered++;
+      if (!isValid) {
+        logger.warn({ itemId: item.id, fileId: fileIdToTest }, "❌ File ID invalid, attempting recovery from Google Drive");
+        
+        if (item.googleDriveUrl) {
+          logger.info({ 
+            itemId: item.id,
+            googleDriveUrl: item.googleDriveUrl 
+          }, "✅ Google Drive URL available - starting recovery");
+          
+          try {
+            const success = await recoverAudioItem(bot, db, item, adminChatId);
+            if (success) {
+              recovered++;
+              logger.info({ itemId: item.id }, "✅ Recovery successful");
+            } else {
+              failed++;
+              logger.error({ itemId: item.id }, "❌ Recovery returned false");
+            }
+          } catch (err: any) {
+            failed++;
+            logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Recovery threw exception");
+          }
         } else {
           failed++;
+          logger.warn({ itemId: item.id }, "❌ File ID invalid but no Google Drive URL available for recovery");
         }
+        
+        // Small delay to avoid rate limits
+        logger.debug({ itemId: item.id }, "Waiting 2 seconds before next item");
+        await new Promise(resolve => setTimeout(resolve, 2000));
       } else {
-        logger.warn({ itemId: item.id }, "File ID invalid but no Google Drive URL available for recovery");
-        failed++;
+        logger.info({ itemId: item.id }, "✅ File ID valid - no recovery needed");
       }
-      
-      // Small delay to avoid rate limits
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } else {
-      logger.debug({ itemId: item.id }, "File ID valid");
+    } catch (err: any) {
+      logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Error during file ID validation");
+      failed++;
     }
   }
   
