@@ -48,6 +48,21 @@ export function createGhlWebhookRouter(params: {
     const signatureTimestamp = String(req.header("x-wh-timestamp") ?? req.header("X-WH-TIMESTAMP") ?? "").trim();
     const token = typeof req.query.token === "string" ? req.query.token : "";
 
+    logger.info(
+      {
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        contentType: req.header("content-type") ?? null,
+        contentLength: req.header("content-length") ?? null,
+        rawBodyBytes: rawBody.length,
+        hasSignatureHeader: !!signatureHeader,
+        hasSignatureTimestamp: !!signatureTimestamp,
+        hasTokenQuery: !!token
+      },
+      "Webhook received"
+    );
+
     let authed = false;
     if (env.ENABLE_PAYMENTS) {
       // Payments enabled - require authentication
@@ -63,11 +78,14 @@ export function createGhlWebhookRouter(params: {
         if (!sig.valid) {
           logger.warn({ reason: sig.reason }, "Webhook signature verification failed");
         }
+        logger.info({ authed }, "Webhook auth (signature) result");
       } else if (env.WEBHOOK_TOKEN && token) {
         authed = token === env.WEBHOOK_TOKEN;
+        logger.info({ authed }, "Webhook auth (token) result");
       } else if (env.WEBHOOK_TOKEN && !signatureHeader) {
         // Tenant might not support signatures; token-only mode.
         authed = token === env.WEBHOOK_TOKEN;
+        logger.info({ authed }, "Webhook auth (token-only fallback) result");
       }
 
       if (!authed) {
@@ -94,11 +112,34 @@ export function createGhlWebhookRouter(params: {
       return;
     }
 
+    logger.info(
+      {
+        customDataKeys:
+          payload?.customData && typeof payload.customData === "object" && !Array.isArray(payload.customData)
+            ? Object.keys(payload.customData)
+            : [],
+        customData: redactCustomData(payload?.customData ?? null)
+      },
+      "Webhook customData"
+    );
+
     const payloadHash = sha256Hex(rawBody);
     const idempotencyKey = extractIdempotencyKey(payload, payloadHash);
 
     const normalized = normalizeWebhook(payload);
     let telegramUserId = normalized.telegramUserId;
+
+    logger.info(
+      {
+        eventType: normalized.eventType,
+        customDataEventType: payload?.customData?.event_type ?? null,
+        contactId: normalized.contactId,
+        telegramUserId,
+        eventAt: normalized.eventAt,
+        payloadKeys: payload && typeof payload === "object" ? Object.keys(payload) : []
+      },
+      "Webhook normalized"
+    );
 
     // Token-based linking: if telegram_user_id is missing, try resolving a checkout token.
     if (!telegramUserId) {
@@ -115,6 +156,7 @@ export function createGhlWebhookRouter(params: {
         if (resolved) {
           telegramUserId = resolved;
           normalized.telegramUserId = resolved;
+          logger.info({ telegramUserId }, "Linked Telegram user via checkout token");
         }
       }
     }
@@ -138,6 +180,7 @@ export function createGhlWebhookRouter(params: {
     if (!telegramUserId && normalized.contactId) {
       try {
         telegramUserId = await fetchTelegramUserIdByContactId({ env, contactId: normalized.contactId });
+        logger.info({ telegramUserId, contactId: normalized.contactId }, "Contact lookup result");
       } catch (err) {
         logger.warn({ err, contactId: normalized.contactId }, "Contact lookup failed");
       }
@@ -175,6 +218,7 @@ export function createGhlWebhookRouter(params: {
       if ((normalized.eventType ?? "").toLowerCase().includes("payment.failed")) {
         // Notify best-effort.
         try {
+          logger.info({ telegramUserId }, "Notifying Telegram user of payment failure");
           await sendTelegramMessage(
             telegramUserId,
             "Payment failed. Please update your payment method in Manage Subscription to avoid losing access."
@@ -183,7 +227,7 @@ export function createGhlWebhookRouter(params: {
           logger.warn({ err, telegramUserId }, "Telegram notify failed (payment.failed)");
         }
       }
-      logger.info({ telegramUserId, reason }, "Webhook processed (no state change)");
+      logger.info({ telegramUserId, reason, eventType: normalized.eventType }, "Webhook processed (no state change)");
       res.status(200).json({ ok: true });
       return;
     }
@@ -203,7 +247,7 @@ export function createGhlWebhookRouter(params: {
     }
 
     const didChange = prev?.state !== nextState;
-    logger.info({ telegramUserId, from: prev?.state, to: nextState }, "User state updated");
+    logger.info({ telegramUserId, from: prev?.state, to: nextState, reason }, "User state updated");
 
     if (didChange) {
       const msg =
@@ -214,6 +258,7 @@ export function createGhlWebhookRouter(params: {
             : "❌ Subscription ended — access has been revoked.";
 
       try {
+        logger.info({ telegramUserId, nextState }, "Notifying Telegram user of state change");
         await sendTelegramMessage(telegramUserId, msg);
       } catch (err) {
         logger.warn({ err, telegramUserId }, "Telegram notify failed (state change)");

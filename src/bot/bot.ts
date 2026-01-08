@@ -34,6 +34,7 @@ export function createBot(params: { env: Env; db: SqliteDb; audio: AudioLibrary 
   bot.start(async (ctx) => {
     try {
       const telegramUserId = ctx.from.id;
+      logger.info({ telegramUserId }, "Telegram /start");
       upsertUserIfMissing(db, telegramUserId);
       const user = getUser(db, telegramUserId);
 

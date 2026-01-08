@@ -3,6 +3,7 @@ import type { Env } from "../../config/env";
 import type { SqliteDb } from "../../db/db";
 import { applyStateTransition, getUser, upsertUserIfMissing } from "../../db/usersRepo";
 import { buildMainMenuKeyboard } from "../menus";
+import { logger } from "../../logger";
 
 const CHECKOUT_PLACEHOLDER = "{telegram_user_id}";
 
@@ -22,6 +23,8 @@ export async function handleSubscribe(params: { ctx: Context; env: Env; db: Sqli
   const { ctx, env, db } = params;
   const telegramUserId = ctx.from?.id;
   if (!telegramUserId) return;
+
+  logger.info({ telegramUserId, paymentsEnabled: env.ENABLE_PAYMENTS }, "Handle subscribe request");
 
   upsertUserIfMissing(db, telegramUserId);
   const user = getUser(db, telegramUserId);
@@ -49,5 +52,6 @@ export async function handleSubscribe(params: { ctx: Context; env: Env; db: Sqli
   }
 
   const url = buildCheckoutUrl(env, telegramUserId);
+  logger.info({ telegramUserId, checkoutUrl: url }, "Generated checkout URL");
   await ctx.reply(["Tap the link to subscribe:", url, "", "After checkout, access is granted automatically."].join("\n"));
 }

@@ -16,8 +16,15 @@ function toBool(v: any): boolean | null {
 }
 
 export function normalizeWebhook(payload: any): NormalizedWebhook {
-  const eventTypeRaw = payload?.type ?? payload?.eventType ?? payload?.event_type ?? null;
-  const eventType = typeof eventTypeRaw === "string" ? eventTypeRaw : null;
+  const eventTypeRaw =
+    payload?.customData?.event_type ??
+    payload?.event_type ??
+    payload?.type ??
+    null;
+  const eventType =
+    typeof eventTypeRaw === "string" && eventTypeRaw.trim().length > 0
+      ? eventTypeRaw.trim().toLowerCase()
+      : null;
 
   const ts =
     payload?.timestamp ??
