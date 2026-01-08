@@ -19,6 +19,19 @@ export function createGhlWebhookRouter(params: {
   const { env, db, sendTelegramMessage } = params;
   const router = Router();
 
+  function redactCustomData(input: any) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+    const redacted: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(input)) {
+      if (/secret|token|key|authorization|password/i.test(key)) {
+        redacted[key] = "[redacted]";
+      } else {
+        redacted[key] = value;
+      }
+    }
+    return redacted;
+  }
+
   router.post("/ghl", async (req: Request, res: Response) => {
     const receivedAt = Date.now();
 
@@ -144,6 +157,21 @@ export function createGhlWebhookRouter(params: {
     const { nextState, reason } = deriveNextState(normalized);
 
     if (!nextState) {
+      if (reason === "unknown_event") {
+        const payloadSource =
+          payload?.customData && typeof payload.customData === "object" && !Array.isArray(payload.customData)
+            ? payload.customData
+            : payload;
+        const customDataKeys = payloadSource && typeof payloadSource === "object" ? Object.keys(payloadSource) : [];
+        logger.warn(
+          {
+            eventType: normalized.eventType,
+            customDataKeys,
+            customData: redactCustomData(payload?.customData ?? null)
+          },
+          "Webhook received unknown event_type"
+        );
+      }
       if ((normalized.eventType ?? "").toLowerCase().includes("payment.failed")) {
         // Notify best-effort.
         try {
