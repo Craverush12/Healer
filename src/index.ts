@@ -60,11 +60,23 @@ async function main() {
     return !!(dbFileId || item.telegramFileId);
   }).length;
   
+  // Count items with Google Drive URLs
+  const itemsWithGoogleDrive = audioItems.filter(item => item.googleDriveUrl);
   logger.info({
     totalAudio: audioItems.length,
     availableAudio: availableCount,
-    missingAudio: audioItems.length - availableCount
+    missingAudio: audioItems.length - availableCount,
+    itemsWithGoogleDrive: itemsWithGoogleDrive.length,
+    itemsWithoutGoogleDrive: audioItems.length - itemsWithGoogleDrive.length
   }, "Audio availability check");
+  
+  if (itemsWithGoogleDrive.length > 0) {
+    logger.info({ 
+      itemsWithGoogleDrive: itemsWithGoogleDrive.map(i => ({ id: i.id, title: i.title }))
+    }, "Audio items with Google Drive URLs found");
+  } else {
+    logger.warn("⚠️ No audio items have Google Drive URLs - automatic upload will be skipped");
+  }
 
   // Telegram bot
   const bot = createBot({ env, db, audio });
@@ -161,33 +173,83 @@ async function main() {
       
       // Always re-upload audio from Google Drive on startup (after 15 seconds delay to ensure bot is fully ready)
       // This ensures fresh file_ids after each deployment
-      if (env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
+      const audioItemsForUpload = audio.manifest.items.filter(item => !item.type || item.type === "audio");
+      const itemsWithGoogleDrive = audioItemsForUpload.filter(item => item.googleDriveUrl);
+      
+      logger.info({ 
+        hasAdminIds: env.ADMIN_TELEGRAM_USER_IDS.length > 0,
+        adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
+        adminIds: env.ADMIN_TELEGRAM_USER_IDS,
+        itemsWithGoogleDrive: itemsWithGoogleDrive.length,
+        totalAudioItems: audioItemsForUpload.length
+      }, "🔍 AUDIO UPLOAD CHECK: Checking configuration for automatic audio upload");
+      
+      if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
+        logger.error("❌ ADMIN_TELEGRAM_USER_IDS is NOT SET in .env file!");
+        logger.error("❌ Automatic audio upload from Google Drive is DISABLED");
+        logger.error("❌ To enable: Add ADMIN_TELEGRAM_USER_IDS=YOUR_TELEGRAM_USER_ID to your .env file");
+        logger.info("Audio recovery will happen on-demand when users request audio");
+      } else if (itemsWithGoogleDrive.length === 0) {
+        logger.warn("⚠️ No audio items have Google Drive URLs - automatic upload will be skipped");
+        logger.warn("⚠️ Add googleDriveUrl to items in audio/manifest.json to enable automatic upload");
+      } else {
         logger.info({ 
           delaySeconds: 15, 
           adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
-          adminIds: env.ADMIN_TELEGRAM_USER_IDS
-        }, "📅 Scheduling automatic audio upload from Google Drive on startup");
-        setTimeout(async () => {
+          adminIds: env.ADMIN_TELEGRAM_USER_IDS,
+          itemsToUpload: itemsWithGoogleDrive.length,
+          itemIds: itemsWithGoogleDrive.map(i => i.id)
+        }, "📅 SCHEDULING: Automatic audio upload from Google Drive will start in 15 seconds");
+        
+        // Store timeout reference to prevent garbage collection
+        const timeoutId = setTimeout(async () => {
+          const startTime = Date.now();
           try {
-            logger.info("🚀 Starting automatic audio upload from Google Drive");
-            logger.info("This will re-upload all audio files that have Google Drive URLs");
+            logger.info("=".repeat(60));
+            logger.info("🚀 TIMEOUT FIRED: Starting automatic audio upload from Google Drive");
+            logger.info("=".repeat(60));
+            logger.info({ 
+              itemsToUpload: itemsWithGoogleDrive.length,
+              itemIds: itemsWithGoogleDrive.map(i => ({ id: i.id, title: i.title })),
+              adminIds: env.ADMIN_TELEGRAM_USER_IDS,
+              botReady: !!bot,
+              dbReady: !!db,
+              audioReady: !!audio
+            }, "Upload context check");
+            
             // Use dynamic import like the manual command for consistency
-            const { validateAndRecoverAudio } = await import("./content/audioRecovery");
-            await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
-            logger.info("✅ Automatic audio upload from Google Drive completed");
+            logger.info("Importing audioRecovery module...");
+            const recoveryModule = await import("./content/audioRecovery");
+            logger.info({ 
+              hasValidateAndRecoverAudio: typeof recoveryModule.validateAndRecoverAudio === "function",
+              moduleKeys: Object.keys(recoveryModule)
+            }, "Audio recovery module imported");
+            
+            logger.info("Calling validateAndRecoverAudio...");
+            await recoveryModule.validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
+            
+            const duration = Date.now() - startTime;
+            logger.info("=".repeat(60));
+            logger.info({ durationMs: duration }, "✅ AUTOMATIC AUDIO UPLOAD FROM GOOGLE DRIVE COMPLETED");
+            logger.info("=".repeat(60));
           } catch (err: any) {
+            const duration = Date.now() - startTime;
+            logger.error("=".repeat(60));
+            logger.error({ durationMs: duration }, "❌ AUTOMATIC AUDIO UPLOAD FROM GOOGLE DRIVE FAILED");
+            logger.error("=".repeat(60));
             logger.error({ 
               err, 
               errorMessage: err?.message,
               errorCode: err?.response?.error_code,
               errorDescription: err?.response?.description,
-              stack: err?.stack 
-            }, "❌ Automatic audio upload from Google Drive failed");
+              stack: err?.stack,
+              errType: err?.constructor?.name,
+              errKeys: err ? Object.keys(err) : []
+            }, "Error details");
           }
         }, 15000); // 15 second delay to ensure bot is fully ready
-      } else {
-        logger.warn("⚠️ No admin IDs configured - automatic audio upload from Google Drive skipped");
-        logger.info("Audio recovery will happen on-demand when users request audio");
+        
+        logger.info({ timeoutId: timeoutId.toString() }, "✅ setTimeout scheduled successfully - upload will start in 15 seconds");
       }
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");

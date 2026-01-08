@@ -268,10 +268,16 @@ export async function uploadAllAudioFromGoogleDrive(
   audio: AudioLibrary,
   chatId: number
 ): Promise<{ uploaded: number; failed: number; total: number }> {
+  logger.info("=".repeat(60));
+  logger.info("🔄 uploadAllAudioFromGoogleDrive FUNCTION CALLED");
+  logger.info("=".repeat(60));
   logger.info({
     chatId,
-    audioItemsCount: audio.manifest.items.length
-  }, "🔄 Starting automatic audio upload from Google Drive on startup");
+    audioItemsCount: audio.manifest.items.length,
+    hasBot: !!bot,
+    hasDb: !!db,
+    hasAudio: !!audio
+  }, "Function parameters check");
   
   const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
   const itemsWithGoogleDrive = audioItems.filter(item => item.googleDriveUrl);
