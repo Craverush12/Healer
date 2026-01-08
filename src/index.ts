@@ -159,17 +159,22 @@ async function main() {
         }
       }
       
-      // Start audio recovery validation in background (after 15 seconds delay to ensure bot is fully ready)
-      // Recovery will also happen on-demand when users request audio, so this is optional
+      // Always re-upload audio from Google Drive on startup (after 15 seconds delay to ensure bot is fully ready)
+      // This ensures fresh file_ids after each deployment
       if (env.ADMIN_TELEGRAM_USER_IDS.length > 0) {
-        logger.info({ delaySeconds: 15, adminCount: env.ADMIN_TELEGRAM_USER_IDS.length }, "Scheduling audio recovery validation");
+        logger.info({ 
+          delaySeconds: 15, 
+          adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
+          adminIds: env.ADMIN_TELEGRAM_USER_IDS
+        }, "📅 Scheduling automatic audio upload from Google Drive on startup");
         setTimeout(async () => {
           try {
-            logger.info("🔄 Starting background audio recovery validation");
+            logger.info("🚀 Starting automatic audio upload from Google Drive");
+            logger.info("This will re-upload all audio files that have Google Drive URLs");
             // Use dynamic import like the manual command for consistency
             const { validateAndRecoverAudio } = await import("./content/audioRecovery");
             await validateAndRecoverAudio(bot, db, audio, env.ADMIN_TELEGRAM_USER_IDS);
-            logger.info("✅ Audio recovery validation completed");
+            logger.info("✅ Automatic audio upload from Google Drive completed");
           } catch (err: any) {
             logger.error({ 
               err, 
@@ -177,11 +182,12 @@ async function main() {
               errorCode: err?.response?.error_code,
               errorDescription: err?.response?.description,
               stack: err?.stack 
-            }, "❌ Audio recovery validation failed with error");
+            }, "❌ Automatic audio upload from Google Drive failed");
           }
         }, 15000); // 15 second delay to ensure bot is fully ready
       } else {
-        logger.info("No admin IDs configured - audio recovery will happen on-demand when users request audio");
+        logger.warn("⚠️ No admin IDs configured - automatic audio upload from Google Drive skipped");
+        logger.info("Audio recovery will happen on-demand when users request audio");
       }
     } catch (err: any) {
       logger.error({ err, message: err?.message }, "Failed to launch Telegram bot");

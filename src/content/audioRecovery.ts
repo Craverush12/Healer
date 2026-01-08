@@ -258,6 +258,85 @@ async function recoverAudioItem(
 }
 
 /**
+ * Always re-uploads all audio items from Google Drive on startup.
+ * This ensures fresh file_ids after each deployment.
+ * Simpler approach: always upload from Google Drive if URL is available.
+ */
+export async function uploadAllAudioFromGoogleDrive(
+  bot: Telegraf,
+  db: SqliteDb,
+  audio: AudioLibrary,
+  chatId: number
+): Promise<{ uploaded: number; failed: number; total: number }> {
+  logger.info({
+    chatId,
+    audioItemsCount: audio.manifest.items.length
+  }, "🔄 Starting automatic audio upload from Google Drive on startup");
+  
+  const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
+  const itemsWithGoogleDrive = audioItems.filter(item => item.googleDriveUrl);
+  
+  logger.info({
+    totalAudioItems: audioItems.length,
+    itemsWithGoogleDrive: itemsWithGoogleDrive.length,
+    itemsWithoutGoogleDrive: audioItems.length - itemsWithGoogleDrive.length
+  }, "📋 Audio items analysis");
+  
+  if (itemsWithGoogleDrive.length === 0) {
+    logger.warn("No audio items have Google Drive URLs - skipping upload");
+    return { uploaded: 0, failed: 0, total: 0 };
+  }
+  
+  let uploaded = 0;
+  let failed = 0;
+  
+  for (const item of itemsWithGoogleDrive) {
+    logger.info({
+      itemId: item.id,
+      title: item.title,
+      googleDriveUrl: item.googleDriveUrl
+    }, `📤 Uploading audio item: ${item.id} - ${item.title}`);
+    
+    try {
+      const success = await recoverAudioItem(bot, db, item, chatId, undefined);
+      if (success) {
+        uploaded++;
+        logger.info({ itemId: item.id, title: item.title }, "✅ Upload successful");
+      } else {
+        failed++;
+        logger.error({ itemId: item.id, title: item.title }, "❌ Upload failed");
+      }
+    } catch (err: any) {
+      failed++;
+      logger.error({ 
+        err, 
+        itemId: item.id, 
+        title: item.title,
+        errorMessage: err?.message,
+        stack: err?.stack 
+      }, "❌ Upload threw exception");
+    }
+    
+    // Small delay to avoid rate limits
+    logger.debug({ itemId: item.id }, "Waiting 2 seconds before next item");
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  
+  logger.info({
+    total: itemsWithGoogleDrive.length,
+    uploaded,
+    failed,
+    summary: {
+      totalItems: itemsWithGoogleDrive.length,
+      itemsUploaded: uploaded,
+      itemsFailed: failed
+    }
+  }, "✅ Audio upload from Google Drive complete - final summary");
+  
+  return { uploaded, failed, total: itemsWithGoogleDrive.length };
+}
+
+/**
  * Validates and recovers all audio items on startup.
  * Runs in background after bot initialization.
  * If no admin chat IDs provided, recovery will happen on-demand when users request audio.
@@ -283,159 +362,30 @@ export async function validateAndRecoverAudio(
   const chatId = adminChatIds[0]; // Use first admin for uploads
   logger.info({ chatId, totalAdmins: adminChatIds.length }, "Using admin chat ID for uploads");
   
-  logger.info("🔄 Starting audio file ID validation and recovery");
+  // Always re-upload from Google Drive on startup (simpler and more reliable)
+  const result = await uploadAllAudioFromGoogleDrive(bot, db, audio, chatId);
   
-  const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
-  logger.info({
-    totalItems: audio.manifest.items.length,
-    audioItemsCount: audioItems.length,
-    audioItemIds: audioItems.map(i => i.id)
-  }, "Filtered audio items for recovery");
-  
-  let validated = 0;
-  let recovered = 0;
-  let failed = 0;
-  let skipped = 0;
-  
-  for (const item of audioItems) {
-    logger.info({
-      itemId: item.id,
-      title: item.title,
-      hasGoogleDriveUrl: !!item.googleDriveUrl,
-      googleDriveUrl: item.googleDriveUrl || "NOT SET"
-    }, `📋 Processing audio item: ${item.id}`);
-    
-    const cachedFileId = getTelegramAudioFileId(db, item.id);
-    const manifestFileId = item.telegramFileId;
-    const fileIdToTest = cachedFileId ?? manifestFileId;
-    
-    logger.debug({
-      itemId: item.id,
-      cachedFileId: cachedFileId || "NONE",
-      manifestFileId: manifestFileId || "NONE",
-      fileIdToTest: fileIdToTest || "NONE"
-    }, "File ID lookup results");
-    
-    // Case 1: No file ID at all - recover from Google Drive if available
-    if (!fileIdToTest) {
-      logger.info({ itemId: item.id, title: item.title }, "⚠️ No file ID found for item");
-      
-      if (item.googleDriveUrl) {
-        logger.info({ 
-          itemId: item.id, 
-          title: item.title,
-          googleDriveUrl: item.googleDriveUrl 
-        }, "✅ Google Drive URL available - starting recovery");
-        
-        try {
-          const success = await recoverAudioItem(bot, db, item, chatId, undefined);
-          if (success) {
-            recovered++;
-            logger.info({ itemId: item.id }, "✅ Recovery successful");
-          } else {
-            failed++;
-            logger.error({ itemId: item.id }, "❌ Recovery failed");
-          }
-        } catch (err: any) {
-          failed++;
-          logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Recovery threw exception");
-        }
-        
-        // Small delay to avoid rate limits
-        logger.debug({ itemId: item.id }, "Waiting 2 seconds before next item");
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        skipped++;
-        logger.warn({ itemId: item.id }, "❌ No file ID and no Google Drive URL - cannot recover");
-      }
-      continue;
-    }
-    
-    // Case 2: File ID exists - validate it
-    validated++;
-    logger.info({ itemId: item.id, fileId: fileIdToTest }, "🔍 File ID exists - validating");
-    
-    try {
-      const isValid = await testTelegramFileId(bot, fileIdToTest);
-      logger.info({ itemId: item.id, fileId: fileIdToTest, isValid }, "File ID validation result");
-      
-      if (!isValid) {
-        logger.warn({ itemId: item.id, fileId: fileIdToTest }, "❌ File ID invalid, attempting recovery from Google Drive");
-        
-        if (item.googleDriveUrl) {
-          logger.info({ 
-            itemId: item.id,
-            googleDriveUrl: item.googleDriveUrl 
-          }, "✅ Google Drive URL available - starting recovery");
-          
-          try {
-            const success = await recoverAudioItem(bot, db, item, chatId, undefined);
-            if (success) {
-              recovered++;
-              logger.info({ itemId: item.id }, "✅ Recovery successful");
-            } else {
-              failed++;
-              logger.error({ itemId: item.id }, "❌ Recovery returned false");
-            }
-          } catch (err: any) {
-            failed++;
-            logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Recovery threw exception");
-          }
-        } else {
-          failed++;
-          logger.warn({ itemId: item.id }, "❌ File ID invalid but no Google Drive URL available for recovery");
-        }
-        
-        // Small delay to avoid rate limits
-        logger.debug({ itemId: item.id }, "Waiting 2 seconds before next item");
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      } else {
-        logger.info({ itemId: item.id }, "✅ File ID valid - no recovery needed");
-      }
-    } catch (err: any) {
-      logger.error({ err, itemId: item.id, stack: err?.stack }, "❌ Error during file ID validation");
-      failed++;
-    }
-  }
-  
-  logger.info({
-    total: audioItems.length,
-    validated,
-    recovered,
-    failed,
-    skipped,
-    summary: {
-      totalItems: audioItems.length,
-      itemsWithFileIds: validated,
-      itemsRecovered: recovered,
-      itemsFailed: failed,
-      itemsSkipped: skipped
-    }
-  }, "✅ Audio validation and recovery complete - final summary");
-  
-  // Notify admins of recovery results
-  if (recovered > 0 || failed > 0 || skipped > 0) {
+  // Notify admins of upload results
+  if (result.total > 0) {
     const message = [
-      "🔄 **Audio Recovery Report**",
+      "🔄 **Startup Audio Upload Complete**",
       "",
-      `📊 Total items: ${audioItems.length}`,
-      `✅ Validated: ${validated}`,
-      `🔄 Recovered: ${recovered}`,
-      `❌ Failed: ${failed}`,
-      `⏭️ Skipped: ${skipped}`
-    ].join("\n");
+      `📊 Total items with Google Drive: ${result.total}`,
+      `✅ Successfully uploaded: ${result.uploaded}`,
+      result.failed > 0 ? `❌ Failed: ${result.failed}` : "",
+      "",
+      "All successfully uploaded audio files are now ready to use."
+    ].filter(Boolean).join("\n");
     
-    logger.info({ message, adminCount: adminChatIds.length }, "Sending recovery report to admins");
+    logger.info({ message, adminCount: adminChatIds.length, result }, "Sending upload report to admins");
     
     for (const adminId of adminChatIds) {
       try {
         await bot.telegram.sendMessage(adminId, message);
-        logger.debug({ adminId }, "Recovery report sent to admin");
+        logger.debug({ adminId }, "Upload report sent to admin");
       } catch (err) {
-        logger.error({ err, adminId, errorMessage: err instanceof Error ? err.message : String(err) }, "❌ Failed to notify admin of recovery results");
+        logger.error({ err, adminId, errorMessage: err instanceof Error ? err.message : String(err) }, "❌ Failed to notify admin of upload results");
       }
     }
-  } else {
-    logger.info("All audio files valid - no recovery needed, no admin notification sent");
   }
 }
