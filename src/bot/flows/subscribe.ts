@@ -52,6 +52,6 @@ export async function handleSubscribe(params: { ctx: Context; env: Env; db: Sqli
   }
 
   const url = buildCheckoutUrl(env, telegramUserId);
-  logger.info({ telegramUserId, checkoutUrl: url }, "Generated checkout URL");
+  logger.info({ telegramUserId }, "Generated checkout URL");
   await ctx.reply(["Tap the link to subscribe:", url, "", "After checkout, access is granted automatically."].join("\n"));
 }

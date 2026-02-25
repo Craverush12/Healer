@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+function toBooleanFlag(val?: string): boolean {
+  if (!val) return false;
+  const lower = val.toLowerCase().trim();
+  return lower === "true" || lower === "1" || lower === "yes";
+}
+
 const EnvSchema = z.object({
   BOT_TOKEN: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -9,12 +15,25 @@ const EnvSchema = z.object({
   ENABLE_PAYMENTS: z
     .string()
     .optional()
-    .transform((val) => {
-      if (!val) return false;
-      const lower = val.toLowerCase().trim();
-      return lower === "true" || lower === "1" || lower === "yes";
-    })
+    .transform(toBooleanFlag)
     .default(() => false),
+
+  // Disable by default. Startup recovery/upload can be expensive and should be an explicit opt-in.
+  ENABLE_STARTUP_AUDIO_RECOVERY: z
+    .string()
+    .optional()
+    .transform(toBooleanFlag)
+    .default(() => false),
+
+  // Safety valve for phased rollout. In production, signature auth is preferred.
+  ALLOW_INSECURE_WEBHOOK_TOKEN_IN_PROD: z
+    .string()
+    .optional()
+    .transform(toBooleanFlag)
+    .default(() => false),
+
+  // Raw webhook payload upper bound for express.raw(). Keep small and raise only if required.
+  WEBHOOK_RAW_BODY_LIMIT_BYTES: z.coerce.number().int().min(1024).max(5 * 1024 * 1024).default(262_144),
 
   // Payment-related (required only if ENABLE_PAYMENTS=true)
   GHL_CHECKOUT_URL_TEMPLATE: z.string().optional(),
@@ -62,6 +81,7 @@ export function loadEnv(raw: NodeJS.ProcessEnv): Env {
   }
 
   const env = parsed.data;
+  const nodeEnv = String(raw.NODE_ENV ?? "").trim().toLowerCase();
 
   // Validate payment-related config only if payments are enabled
   if (env.ENABLE_PAYMENTS) {
@@ -75,6 +95,13 @@ export function loadEnv(raw: NodeJS.ProcessEnv): Env {
     const hasToken = !!env.WEBHOOK_TOKEN && env.WEBHOOK_TOKEN.trim().length > 0;
     if (!hasSig && !hasToken) {
       throw new Error("Webhook auth not configured: set GHL_WEBHOOK_SECRET or WEBHOOK_TOKEN.");
+    }
+
+    if (nodeEnv === "production" && !hasSig && hasToken && !env.ALLOW_INSECURE_WEBHOOK_TOKEN_IN_PROD) {
+      throw new Error(
+        "Production payments mode requires GHL_WEBHOOK_SECRET (HMAC webhook signing). " +
+          "Set ALLOW_INSECURE_WEBHOOK_TOKEN_IN_PROD=true only as a temporary migration override."
+      );
     }
 
     const placeholder = "{telegram_user_id}";

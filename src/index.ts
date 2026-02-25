@@ -84,6 +84,11 @@ async function main() {
   // Schedule audio upload from Google Drive on startup (independent of bot launch)
   // This ensures it runs even if bot.launch() has issues
   (() => {
+    if (!env.ENABLE_STARTUP_AUDIO_RECOVERY) {
+      logger.info("Startup audio recovery disabled (ENABLE_STARTUP_AUDIO_RECOVERY=false)");
+      return;
+    }
+
     const audioItemsForUpload = audio.manifest.items.filter(item => !item.type || item.type === "audio");
     const itemsWithGoogleDrive = audioItemsForUpload.filter(item => item.googleDriveUrl);
     
@@ -183,7 +188,10 @@ async function main() {
       max: 120
     })
   );
-  app.use("/webhooks", express.raw({ type: "*/*" }));
+  app.use(
+    "/webhooks",
+    express.raw({ type: "*/*", limit: env.WEBHOOK_RAW_BODY_LIMIT_BYTES })
+  );
   app.use(
     "/webhooks",
     createGhlWebhookRouter({

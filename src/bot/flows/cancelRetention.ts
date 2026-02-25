@@ -27,6 +27,7 @@ export async function startCancellationFlow(params: { ctx: Context; db: SqliteDb
 
   if (user.state === "CANCEL_PENDING") {
     await ctx.reply("Your subscription is already scheduled to cancel at the end of the billing cycle.");
+    return;
   }
 
   const reasonKeyboard = Markup.inlineKeyboard([
