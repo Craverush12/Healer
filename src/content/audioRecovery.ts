@@ -3,6 +3,7 @@ import type { AudioLibrary } from "./library";
 import { getTelegramAudioFileId, upsertTelegramAudioFileId } from "../db/audioCacheRepo";
 import type { SqliteDb } from "../db/db";
 import { logger } from "../logger";
+import { httpFetch } from "../http/client";
 
 const TELEGRAM_AUDIO_LIMIT_BYTES = 49 * 1024 * 1024; // 50MB limit
 
@@ -48,7 +49,14 @@ async function downloadFromGoogleDrive(url: string): Promise<Buffer> {
   
   try {
     logger.debug({ url }, "Sending fetch request to Google Drive");
-    const response = await fetch(url);
+    const response = await httpFetch(url, {
+      method: "GET",
+      timeoutMs: 90_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 500,
+      retryMaxDelayMs: 3_000,
+      requestName: "audio_recovery_download"
+    });
     
     logger.info({
       url,

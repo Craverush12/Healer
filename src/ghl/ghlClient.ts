@@ -1,4 +1,5 @@
 import type { Env } from "../config/env";
+import { httpFetch } from "../http/client";
 import { logger } from "../logger";
 
 type ContactRecord = {
@@ -28,6 +29,9 @@ type LocationInfo = {
 
 let cachedLocationId: string | null = null;
 let locationInitPromise: Promise<string | null> | null = null;
+
+const GHL_HTTP_TIMEOUT_MS = 10_000;
+const GHL_HTTP_MAX_RETRIES = 2;
 
 function getBaseUrl(env: Env): string {
   return env.GHL_API_BASE_URL.replace(/\/$/, "");
@@ -77,9 +81,12 @@ async function fetchLocationIdFromApi(env: Env): Promise<string | null> {
 
   for (const url of endpoints) {
     try {
-      const resp = await fetch(url, {
+      const resp = await httpFetch(url, {
         method: "GET",
-        headers: getAuthHeaders(env)
+        headers: getAuthHeaders(env),
+        timeoutMs: GHL_HTTP_TIMEOUT_MS,
+        maxRetries: GHL_HTTP_MAX_RETRIES,
+        requestName: "ghl_location_fetch"
       });
 
       if (!resp.ok) {
@@ -172,10 +179,15 @@ export async function findContactByTelegramUserId(params: {
     for (const query of queries) {
       logger.debug({ telegramUserId, query, body: buildBody(query) }, "GHL contact search attempting query");
       
-      const resp = await fetch(url, {
+      const resp = await httpFetch(url, {
         method: "POST",
         headers: getAuthHeaders(env),
-        body: JSON.stringify(buildBody(query))
+        body: JSON.stringify(buildBody(query)),
+        timeoutMs: GHL_HTTP_TIMEOUT_MS,
+        maxRetries: GHL_HTTP_MAX_RETRIES,
+        requestName: "ghl_contact_search",
+        logMeta: { query },
+        idempotent: true
       });
 
       if (!resp.ok) {
@@ -259,9 +271,12 @@ async function fetchSubscriptions(env: Env, url: string): Promise<SubscriptionSt
   logger.debug({ url }, "GHL subscription fetch started");
   
   try {
-    const resp = await fetch(url, {
+    const resp = await httpFetch(url, {
       method: "GET",
-      headers: getAuthHeaders(env)
+      headers: getAuthHeaders(env),
+      timeoutMs: 12_000,
+      maxRetries: GHL_HTTP_MAX_RETRIES,
+      requestName: "ghl_subscription_fetch"
     });
 
     if (!resp.ok) {
