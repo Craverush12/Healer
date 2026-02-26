@@ -79,6 +79,7 @@ The mapping is stored in SQLite (`telegram_audio_cache` table).
 - [docs/ADMIN.md](docs/ADMIN.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/HOSTING.md](docs/HOSTING.md)
+- [docs/AWS_LIGHTSAIL_S3_DEPLOYMENT.md](docs/AWS_LIGHTSAIL_S3_DEPLOYMENT.md) — End-to-end plan for hosting on AWS Lightsail + S3
 
 Archived/internal docs live in `docs/archive/`.
 
