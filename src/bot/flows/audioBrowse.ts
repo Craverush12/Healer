@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { Markup, Telegraf } from "telegraf";
 import type { Context } from "telegraf";
 
-import type { AudioLibrary } from "../../content/library";
+import { getAudioRemoteBackupUrl, type AudioLibrary } from "../../content/library";
 import { resolveAudioFilePath } from "../../content/storage";
 import { getTelegramAudioFileId } from "../../db/audioCacheRepo";
 import type { SqliteDb } from "../../db/db";
@@ -264,26 +264,30 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
             "Failed to send audio by file_id"
           );
           if (isWrongFileIdentifier(err)) {
-            logger.warn({ itemId, fileIdToUse }, "Invalid Telegram file_id; attempting Google Drive recovery");
+            const remoteBackupUrl = getAudioRemoteBackupUrl(item);
+            logger.warn(
+              { itemId, fileIdToUse, hasRemoteBackupUrl: !!remoteBackupUrl },
+              "Invalid Telegram file_id; attempting remote backup recovery"
+            );
             
-            // Try to recover from Google Drive first
-            if (item.googleDriveUrl) {
+            // Try to recover from remote backup first (provider-agnostic: storage URL or legacy googleDriveUrl)
+            if (remoteBackupUrl) {
               try {
-                await ctx.reply("🔄 Recovering audio from backup... This may take a moment.");
+                await ctx.reply("Loading audio from backup storage... This may take a moment.");
                 const telegramUserId = ctx.from?.id;
                 if (telegramUserId) {
                   const newFileId = await recoverAudioItemForUser(bot, db, item, telegramUserId, caption);
                   if (newFileId) {
-                    logger.info({ itemId, newFileId }, "✅ Audio recovered from Google Drive and sent to user");
+                    logger.info({ itemId, newFileId }, "Audio recovered from remote backup and sent to user");
                     return;
                   }
                 }
               } catch (recoveryErr: any) {
-                logger.error({ err: recoveryErr, itemId }, "Google Drive recovery failed, falling back to local file");
+                logger.error({ err: recoveryErr, itemId }, "Remote backup recovery failed, falling back to local file");
               }
             }
             
-            // Fallback to local file if Google Drive recovery failed or not available
+            // Fallback to local file if remote backup recovery failed or not available
             logger.warn({ itemId, fileIdToUse }, "Attempting local file fallback");
             const ok = await sendAudioFromFile({
               ctx,
@@ -306,6 +310,23 @@ export function registerAudioBrowseHandlers(bot: Telegraf, params: { db: SqliteD
           }
         }
         return;
+      }
+
+      const remoteBackupUrl = getAudioRemoteBackupUrl(item);
+      if (remoteBackupUrl) {
+        try {
+          await ctx.reply("Loading audio from backup storage... This may take a moment.");
+          const telegramUserId = ctx.from?.id;
+          if (telegramUserId) {
+            const newFileId = await recoverAudioItemForUser(bot, db, item, telegramUserId, caption);
+            if (newFileId) {
+              logger.info({ itemId, newFileId }, "Audio recovered from remote backup and sent to user");
+              return;
+            }
+          }
+        } catch (recoveryErr: any) {
+          logger.error({ err: recoveryErr, itemId }, "Remote backup recovery failed; trying local file fallback");
+        }
       }
 
       await sendAudioFromFile({

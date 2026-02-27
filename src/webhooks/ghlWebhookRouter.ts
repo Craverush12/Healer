@@ -19,15 +19,29 @@ export function createGhlWebhookRouter(params: {
   const { env, db, sendTelegramMessage } = params;
   const router = Router();
 
-  function redactCustomData(input: any) {
-    if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  function redactForLogs(input: any, depth = 0): any {
+    if (depth > 4) return "[max_depth]";
+    if (input === null || input === undefined) return input;
+    if (typeof input !== "object") return input;
+
+    if (Buffer.isBuffer(input)) {
+      return `[buffer:${input.length}]`;
+    }
+
+    if (Array.isArray(input)) {
+      const maxItems = 20;
+      const arr = input.slice(0, maxItems).map((value) => redactForLogs(value, depth + 1));
+      if (input.length > maxItems) arr.push(`[truncated:${input.length - maxItems}]`);
+      return arr;
+    }
+
     const redacted: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(input)) {
       if (/secret|token|key|authorization|password/i.test(key)) {
         redacted[key] = "[redacted]";
-      } else {
-        redacted[key] = value;
+        continue;
       }
+      redacted[key] = redactForLogs(value, depth + 1);
     }
     return redacted;
   }
@@ -118,7 +132,7 @@ export function createGhlWebhookRouter(params: {
           payload?.customData && typeof payload.customData === "object" && !Array.isArray(payload.customData)
             ? Object.keys(payload.customData)
             : [],
-        customData: redactCustomData(payload?.customData ?? null)
+        customData: redactForLogs(payload?.customData ?? null)
       },
       "Webhook customData"
     );
@@ -263,7 +277,7 @@ export function createGhlWebhookRouter(params: {
           {
             eventType: normalized.eventType,
             customDataKeys,
-            customData: redactCustomData(payload?.customData ?? null)
+            customData: redactForLogs(payload?.customData ?? null)
           },
           "Webhook received unknown event_type"
         );

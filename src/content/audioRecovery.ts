@@ -1,5 +1,6 @@
 import { Telegraf } from "telegraf";
 import type { AudioLibrary } from "./library";
+import { getAudioRemoteBackupSource, getAudioRemoteBackupUrl } from "./library";
 import { getTelegramAudioFileId, upsertTelegramAudioFileId } from "../db/audioCacheRepo";
 import type { SqliteDb } from "../db/db";
 import { logger } from "../logger";
@@ -41,14 +42,14 @@ async function testTelegramFileId(bot: Telegraf, fileId: string): Promise<boolea
 }
 
 /**
- * Downloads an audio file from Google Drive.
+ * Downloads an audio file from a provider-agnostic remote backup URL (e.g. object storage, Google Drive).
  */
-async function downloadFromGoogleDrive(url: string): Promise<Buffer> {
-  logger.info({ url }, "📥 Starting download from Google Drive");
+async function downloadFromRemoteBackup(url: string, source: string | null): Promise<Buffer> {
+  logger.info({ url, source }, "Starting download from remote backup source");
   const startTime = Date.now();
   
   try {
-    logger.debug({ url }, "Sending fetch request to Google Drive");
+    logger.debug({ url, source }, "Sending fetch request to remote backup source");
     const response = await httpFetch(url, {
       method: "GET",
       timeoutMs: 90_000,
@@ -60,21 +61,23 @@ async function downloadFromGoogleDrive(url: string): Promise<Buffer> {
     
     logger.info({
       url,
+      source,
       status: response.status,
       statusText: response.statusText,
       contentType: response.headers.get("content-type"),
       contentLength: response.headers.get("content-length")
-    }, "Google Drive response received");
+    }, "Remote backup response received");
     
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unable to read error response");
       logger.error({
         url,
+        source,
         status: response.status,
         statusText: response.statusText,
         errorText
-      }, "❌ Google Drive download failed");
-      throw new Error(`Google Drive download failed: ${response.status} ${response.statusText} - ${errorText}`);
+      }, "Remote backup download failed");
+      throw new Error(`Remote backup download failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
     
     logger.debug({ url }, "Reading response as array buffer");
@@ -87,19 +90,27 @@ async function downloadFromGoogleDrive(url: string): Promise<Buffer> {
       sizeBytes: buffer.length,
       sizeMB: Math.round((buffer.length / (1024 * 1024)) * 100) / 100,
       downloadTimeMs: downloadTime
-    }, "✅ Downloaded audio from Google Drive successfully");
+    }, "Downloaded audio from remote backup source successfully");
     
     return buffer;
   } catch (err: any) {
     logger.error({
       err,
       url,
+      source,
       errorMessage: err?.message,
       stack: err?.stack
-    }, "❌ Google Drive download exception");
+    }, "Remote backup download exception");
     throw err;
   }
 }
+
+type RecoverableAudioItem = {
+  id: string;
+  title: string;
+  remoteUrl?: string;
+  googleDriveUrl?: string;
+};
 
 /**
  * Uploads audio buffer to Telegram and returns the file_id.
@@ -131,14 +142,14 @@ async function uploadToTelegram(
 }
 
 /**
- * Recovers a single audio item from Google Drive if its file_id is invalid.
+ * Recovers a single audio item from a remote backup source if its file_id is invalid.
  * Uploads to the specified chat ID (can be any user, not just admin).
  * Returns the new file_id if successful, null otherwise.
  */
 export async function recoverAudioItemForUser(
   bot: Telegraf,
   db: SqliteDb,
-  item: { id: string; title: string; googleDriveUrl?: string },
+  item: RecoverableAudioItem,
   chatId: number,
   caption?: string
 ): Promise<string | null> {
@@ -151,32 +162,39 @@ export async function recoverAudioItemForUser(
 }
 
 /**
- * Internal function to recover a single audio item from Google Drive.
+ * Internal function to recover a single audio item from a remote backup source.
  * Uploads to the specified chat ID (can be any user, not just admin).
  */
 async function recoverAudioItem(
   bot: Telegraf,
   db: SqliteDb,
-  item: { id: string; title: string; googleDriveUrl?: string },
+  item: RecoverableAudioItem,
   chatId: number,
   caption?: string
 ): Promise<boolean> {
+  const remoteBackupUrl = getAudioRemoteBackupUrl(item);
+  const remoteBackupSource = getAudioRemoteBackupSource(item);
+
   logger.info({
     itemId: item.id,
     title: item.title,
     chatId,
-    hasGoogleDriveUrl: !!item.googleDriveUrl
-  }, "🔄 Starting recovery for audio item");
+    hasRemoteBackupUrl: !!remoteBackupUrl,
+    remoteBackupSource
+  }, "Starting recovery for audio item");
   
-  if (!item.googleDriveUrl) {
-    logger.error({ itemId: item.id }, "❌ No Google Drive URL available for recovery");
+  if (!remoteBackupUrl) {
+    logger.error({ itemId: item.id }, "No remote backup URL available for recovery");
     return false;
   }
   
   try {
-    // Download from Google Drive
-    logger.info({ itemId: item.id, url: item.googleDriveUrl }, "Step 1: Downloading from Google Drive");
-    const audioBuffer = await downloadFromGoogleDrive(item.googleDriveUrl);
+    // Download from remote backup source
+    logger.info(
+      { itemId: item.id, url: remoteBackupUrl, remoteBackupSource },
+      "Step 1: Downloading from remote backup source"
+    );
+    const audioBuffer = await downloadFromRemoteBackup(remoteBackupUrl, remoteBackupSource);
     
     logger.info({
       itemId: item.id,
@@ -266,9 +284,10 @@ async function recoverAudioItem(
 }
 
 /**
- * Always re-uploads all audio items from Google Drive on startup.
+ * Legacy export name kept for compatibility. Internally this now uses any remote backup URL
+ * (e.g. `remoteUrl` or legacy `googleDriveUrl`) configured on audio items.
  * This ensures fresh file_ids after each deployment.
- * Simpler approach: always upload from Google Drive if URL is available.
+ * Simpler approach: always upload from remote backup source if URL is available.
  */
 export async function uploadAllAudioFromGoogleDrive(
   bot: Telegraf,
@@ -277,7 +296,7 @@ export async function uploadAllAudioFromGoogleDrive(
   chatId: number
 ): Promise<{ uploaded: number; failed: number; total: number }> {
   logger.info("=".repeat(60));
-  logger.info("🔄 uploadAllAudioFromGoogleDrive FUNCTION CALLED");
+  logger.info("uploadAllAudioFromGoogleDrive FUNCTION CALLED (remote-backup compatible)");
   logger.info("=".repeat(60));
   logger.info({
     chatId,
@@ -288,28 +307,31 @@ export async function uploadAllAudioFromGoogleDrive(
   }, "Function parameters check");
   
   const audioItems = audio.manifest.items.filter(item => !item.type || item.type === "audio");
-  const itemsWithGoogleDrive = audioItems.filter(item => item.googleDriveUrl);
+  const itemsWithRemoteBackup = audioItems.filter(item => !!getAudioRemoteBackupUrl(item));
   
   logger.info({
     totalAudioItems: audioItems.length,
-    itemsWithGoogleDrive: itemsWithGoogleDrive.length,
-    itemsWithoutGoogleDrive: audioItems.length - itemsWithGoogleDrive.length
-  }, "📋 Audio items analysis");
+    itemsWithRemoteBackup: itemsWithRemoteBackup.length,
+    itemsWithoutRemoteBackup: audioItems.length - itemsWithRemoteBackup.length
+  }, "Audio items analysis");
   
-  if (itemsWithGoogleDrive.length === 0) {
-    logger.warn("No audio items have Google Drive URLs - skipping upload");
+  if (itemsWithRemoteBackup.length === 0) {
+    logger.warn("No audio items have remote backup URLs - skipping upload");
     return { uploaded: 0, failed: 0, total: 0 };
   }
   
   let uploaded = 0;
   let failed = 0;
   
-  for (const item of itemsWithGoogleDrive) {
+  for (const item of itemsWithRemoteBackup) {
+    const remoteBackupUrl = getAudioRemoteBackupUrl(item);
+    const remoteBackupSource = getAudioRemoteBackupSource(item);
     logger.info({
       itemId: item.id,
       title: item.title,
-      googleDriveUrl: item.googleDriveUrl
-    }, `📤 Uploading audio item: ${item.id} - ${item.title}`);
+      remoteBackupSource,
+      remoteBackupUrl
+    }, `Uploading audio item: ${item.id} - ${item.title}`);
     
     try {
       const success = await recoverAudioItem(bot, db, item, chatId, undefined);
@@ -337,17 +359,17 @@ export async function uploadAllAudioFromGoogleDrive(
   }
   
   logger.info({
-    total: itemsWithGoogleDrive.length,
+    total: itemsWithRemoteBackup.length,
     uploaded,
     failed,
     summary: {
-      totalItems: itemsWithGoogleDrive.length,
+      totalItems: itemsWithRemoteBackup.length,
       itemsUploaded: uploaded,
       itemsFailed: failed
     }
-  }, "✅ Audio upload from Google Drive complete - final summary");
+  }, "Audio upload from remote backups complete - final summary");
   
-  return { uploaded, failed, total: itemsWithGoogleDrive.length };
+  return { uploaded, failed, total: itemsWithRemoteBackup.length };
 }
 
 /**
@@ -376,7 +398,7 @@ export async function validateAndRecoverAudio(
   const chatId = adminChatIds[0]; // Use first admin for uploads
   logger.info({ chatId, totalAdmins: adminChatIds.length }, "Using admin chat ID for uploads");
   
-  // Always re-upload from Google Drive on startup (simpler and more reliable)
+  // Always re-upload from remote backup URLs on startup (legacy function name kept)
   const result = await uploadAllAudioFromGoogleDrive(bot, db, audio, chatId);
   
   // Notify admins of upload results
@@ -384,7 +406,7 @@ export async function validateAndRecoverAudio(
     const message = [
       "🔄 **Startup Audio Upload Complete**",
       "",
-      `📊 Total items with Google Drive: ${result.total}`,
+      `📊 Total items with remote backup URLs: ${result.total}`,
       `✅ Successfully uploaded: ${result.uploaded}`,
       result.failed > 0 ? `❌ Failed: ${result.failed}` : "",
       "",

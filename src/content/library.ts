@@ -19,7 +19,8 @@ const ItemSchema = z.object({
   filePath: z.string().optional(), // Optional for external links
   url: z.string().url().optional(), // For external links (Spotify, etc.)
   telegramFileId: z.string().optional(), // Optional: cached Telegram file_id, lets us avoid local files in production
-  googleDriveUrl: z.string().url().optional(), // Google Drive direct download URL for auto-recovery
+  remoteUrl: z.string().url().optional(), // Provider-agnostic remote backup/storage URL for recovery
+  googleDriveUrl: z.string().url().optional(), // Legacy Google Drive backup URL (backward compatibility)
   description: z.string().optional(),
   duration: z.string().optional(), // e.g., "15 min", "8 hours"
   recommended: z.boolean().optional(), // "Start Here" flag
@@ -37,12 +38,31 @@ export type AudioCategory = z.infer<typeof CategorySchema>;
 export type AudioItem = z.infer<typeof ItemSchema>;
 export type AudioManifest = z.infer<typeof ManifestSchema>;
 
+type AudioItemWithRemoteBackup = {
+  remoteUrl?: string;
+  googleDriveUrl?: string;
+};
+
 export type AudioLibrary = {
   manifest: AudioManifest;
   categoriesById: Map<string, AudioCategory>;
   itemsById: Map<string, AudioItem>;
   itemsByCategoryId: Map<string, AudioItem[]>;
 };
+
+export function getAudioRemoteBackupUrl(item: AudioItemWithRemoteBackup): string | null {
+  const remoteUrl = typeof item.remoteUrl === "string" && item.remoteUrl.trim().length > 0 ? item.remoteUrl.trim() : null;
+  if (remoteUrl) return remoteUrl;
+  const legacyGoogleDriveUrl =
+    typeof item.googleDriveUrl === "string" && item.googleDriveUrl.trim().length > 0 ? item.googleDriveUrl.trim() : null;
+  return legacyGoogleDriveUrl;
+}
+
+export function getAudioRemoteBackupSource(item: AudioItemWithRemoteBackup): "remoteUrl" | "googleDriveUrl" | null {
+  if (typeof item.remoteUrl === "string" && item.remoteUrl.trim().length > 0) return "remoteUrl";
+  if (typeof item.googleDriveUrl === "string" && item.googleDriveUrl.trim().length > 0) return "googleDriveUrl";
+  return null;
+}
 
 export function loadAudioLibrary(manifestPath = path.join(process.cwd(), "audio", "manifest.json")): AudioLibrary {
   const raw = fs.readFileSync(manifestPath, "utf8");
@@ -70,9 +90,9 @@ export function loadAudioLibrary(manifestPath = path.join(process.cwd(), "audio"
     if (!categoriesById.has(item.categoryId)) {
       throw new Error(`Invalid audio manifest: item '${item.id}' references missing categoryId '${item.categoryId}'.`);
     }
-    if (item.type === "audio" && !item.filePath && !item.telegramFileId) {
+    if (item.type === "audio" && !item.filePath && !item.telegramFileId && !getAudioRemoteBackupUrl(item)) {
       throw new Error(
-        `Invalid audio manifest: item '${item.id}' is type 'audio' but has neither filePath nor telegramFileId.`
+        `Invalid audio manifest: item '${item.id}' is type 'audio' but has no filePath, telegramFileId, or remote backup URL.`
       );
     }
     if (item.type === "external" && !item.url) {

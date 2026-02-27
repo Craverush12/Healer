@@ -27,3 +27,15 @@ export function tryInsertWebhookEvent(params: {
   }
 }
 
+export function deleteWebhookEventsOlderThan(db: DbLike, cutoffMs: number): number {
+  const result = db.prepare("DELETE FROM webhook_events WHERE received_at < ?").run(cutoffMs) as { changes?: number };
+  return Number(result?.changes ?? 0);
+}
+
+export function countWebhookEventsOlderThan(db: DbLike, cutoffMs: number): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM webhook_events WHERE received_at < ?").get(cutoffMs) as
+    | { count: number }
+    | undefined;
+  return Number(row?.count ?? 0);
+}
+

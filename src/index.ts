@@ -6,8 +6,9 @@ import { createIpRateLimiter } from "./webhooks/rateLimit";
 import { loadEnv } from "./config/env";
 import { logger } from "./logger";
 import { applySchema, openSqlite } from "./db/db";
+import { runDbMaintenance } from "./db/maintenance";
 import { SCHEMA_SQL } from "./db/schema";
-import { loadAudioLibrary } from "./content/library";
+import { getAudioRemoteBackupUrl, loadAudioLibrary } from "./content/library";
 import { createBot } from "./bot/bot";
 import { getSampleCheckoutUrl } from "./bot/flows/subscribe";
 import { initGhlClient } from "./ghl/ghlClient";
@@ -46,6 +47,31 @@ async function main() {
   applySchema(db, SCHEMA_SQL);
   logger.info({ dbPath: env.DB_PATH }, "SQLite ready");
 
+  const runDbMaintenancePass = (trigger: "startup" | "interval") => {
+    if (!env.ENABLE_DB_MAINTENANCE) return;
+    const result = runDbMaintenance({
+      db,
+      webhookEventsRetentionDays: env.WEBHOOK_EVENTS_RETENTION_DAYS
+    });
+    logger.info(
+      {
+        trigger,
+        webhookEventsRetentionDays: env.WEBHOOK_EVENTS_RETENTION_DAYS,
+        deletedExpiredCheckoutTokens: result.deletedExpiredCheckoutTokens,
+        deletedOldWebhookEvents: result.deletedOldWebhookEvents
+      },
+      "DB maintenance pass completed"
+    );
+  };
+
+  if (env.ENABLE_DB_MAINTENANCE) {
+    try {
+      runDbMaintenancePass("startup");
+    } catch (err) {
+      logger.error({ err }, "DB maintenance startup pass failed");
+    }
+  }
+
   // Audio manifest (admin-managed)
   const audio = loadAudioLibrary();
   logger.info(
@@ -60,28 +86,28 @@ async function main() {
     return !!(dbFileId || item.telegramFileId);
   }).length;
   
-  // Count items with Google Drive URLs
-  const itemsWithGoogleDrive = audioItems.filter(item => item.googleDriveUrl);
+  // Count items with remote backup URLs (provider-agnostic; includes legacy googleDriveUrl)
+  const itemsWithRemoteBackup = audioItems.filter(item => !!getAudioRemoteBackupUrl(item));
   logger.info({
     totalAudio: audioItems.length,
     availableAudio: availableCount,
     missingAudio: audioItems.length - availableCount,
-    itemsWithGoogleDrive: itemsWithGoogleDrive.length,
-    itemsWithoutGoogleDrive: audioItems.length - itemsWithGoogleDrive.length
+    itemsWithRemoteBackup: itemsWithRemoteBackup.length,
+    itemsWithoutRemoteBackup: audioItems.length - itemsWithRemoteBackup.length
   }, "Audio availability check");
   
-  if (itemsWithGoogleDrive.length > 0) {
+  if (itemsWithRemoteBackup.length > 0) {
     logger.info({ 
-      itemsWithGoogleDrive: itemsWithGoogleDrive.map(i => ({ id: i.id, title: i.title }))
-    }, "Audio items with Google Drive URLs found");
+      itemsWithRemoteBackup: itemsWithRemoteBackup.map(i => ({ id: i.id, title: i.title }))
+    }, "Audio items with remote backup URLs found");
   } else {
-    logger.warn("⚠️ No audio items have Google Drive URLs - automatic upload will be skipped");
+    logger.warn("⚠️ No audio items have remote backup URLs - automatic upload will be skipped");
   }
 
   // Telegram bot
   const bot = createBot({ env, db, audio });
 
-  // Schedule audio upload from Google Drive on startup (independent of bot launch)
+  // Schedule audio upload from remote backups on startup (independent of bot launch)
   // This ensures it runs even if bot.launch() has issues
   (() => {
     if (!env.ENABLE_STARTUP_AUDIO_RECOVERY) {
@@ -90,7 +116,7 @@ async function main() {
     }
 
     const audioItemsForUpload = audio.manifest.items.filter(item => !item.type || item.type === "audio");
-    const itemsWithGoogleDrive = audioItemsForUpload.filter(item => item.googleDriveUrl);
+    const itemsWithRemoteBackup = audioItemsForUpload.filter(item => !!getAudioRemoteBackupUrl(item));
     
     logger.info("=".repeat(60));
     logger.info("🔍 AUDIO UPLOAD CHECK: Checking configuration for automatic audio upload");
@@ -99,37 +125,37 @@ async function main() {
       hasAdminIds: env.ADMIN_TELEGRAM_USER_IDS.length > 0,
       adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
       adminIds: env.ADMIN_TELEGRAM_USER_IDS,
-      itemsWithGoogleDrive: itemsWithGoogleDrive.length,
+      itemsWithRemoteBackup: itemsWithRemoteBackup.length,
       totalAudioItems: audioItemsForUpload.length
     }, "Configuration check");
     
     if (env.ADMIN_TELEGRAM_USER_IDS.length === 0) {
       logger.error("❌ ADMIN_TELEGRAM_USER_IDS is NOT SET in .env file!");
-      logger.error("❌ Automatic audio upload from Google Drive is DISABLED");
+      logger.error("❌ Automatic audio upload from remote backups is DISABLED");
       logger.error("❌ To enable: Add ADMIN_TELEGRAM_USER_IDS=YOUR_TELEGRAM_USER_ID to your .env file");
       logger.info("Audio recovery will happen on-demand when users request audio");
-    } else if (itemsWithGoogleDrive.length === 0) {
-      logger.warn("⚠️ No audio items have Google Drive URLs - automatic upload will be skipped");
-      logger.warn("⚠️ Add googleDriveUrl to items in audio/manifest.json to enable automatic upload");
+    } else if (itemsWithRemoteBackup.length === 0) {
+      logger.warn("⚠️ No audio items have remote backup URLs - automatic upload will be skipped");
+      logger.warn("⚠️ Add remoteUrl (or legacy googleDriveUrl) to items in audio/manifest.json to enable automatic upload");
     } else {
       logger.info({ 
         delaySeconds: 15, 
         adminCount: env.ADMIN_TELEGRAM_USER_IDS.length,
         adminIds: env.ADMIN_TELEGRAM_USER_IDS,
-        itemsToUpload: itemsWithGoogleDrive.length,
-        itemIds: itemsWithGoogleDrive.map(i => i.id)
-      }, "📅 SCHEDULING: Automatic audio upload from Google Drive will start in 15 seconds");
+        itemsToUpload: itemsWithRemoteBackup.length,
+        itemIds: itemsWithRemoteBackup.map(i => i.id)
+      }, "📅 SCHEDULING: Automatic audio upload from remote backups will start in 15 seconds");
       
       // Store timeout reference to prevent garbage collection
       const timeoutId = setTimeout(async () => {
         const startTime = Date.now();
         try {
           logger.info("=".repeat(60));
-          logger.info("🚀 TIMEOUT FIRED: Starting automatic audio upload from Google Drive");
+          logger.info("🚀 TIMEOUT FIRED: Starting automatic audio upload from remote backups");
           logger.info("=".repeat(60));
           logger.info({ 
-            itemsToUpload: itemsWithGoogleDrive.length,
-            itemIds: itemsWithGoogleDrive.map(i => ({ id: i.id, title: i.title })),
+            itemsToUpload: itemsWithRemoteBackup.length,
+            itemIds: itemsWithRemoteBackup.map(i => ({ id: i.id, title: i.title })),
             adminIds: env.ADMIN_TELEGRAM_USER_IDS,
             botReady: !!bot,
             dbReady: !!db,
@@ -149,12 +175,12 @@ async function main() {
           
           const duration = Date.now() - startTime;
           logger.info("=".repeat(60));
-          logger.info({ durationMs: duration }, "✅ AUTOMATIC AUDIO UPLOAD FROM GOOGLE DRIVE COMPLETED");
+          logger.info({ durationMs: duration }, "✅ AUTOMATIC AUDIO UPLOAD FROM REMOTE BACKUPS COMPLETED");
           logger.info("=".repeat(60));
         } catch (err: any) {
           const duration = Date.now() - startTime;
           logger.error("=".repeat(60));
-          logger.error({ durationMs: duration }, "❌ AUTOMATIC AUDIO UPLOAD FROM GOOGLE DRIVE FAILED");
+          logger.error({ durationMs: duration }, "❌ AUTOMATIC AUDIO UPLOAD FROM REMOTE BACKUPS FAILED");
           logger.error("=".repeat(60));
           logger.error({ 
             err, 
@@ -180,7 +206,8 @@ async function main() {
   });
 
   // Webhook endpoint needs raw body for signature verification.
-  app.set("trust proxy", true);
+  app.set("trust proxy", env.TRUST_PROXY_HOPS > 0 ? env.TRUST_PROXY_HOPS : false);
+  logger.info({ trustProxyHops: env.TRUST_PROXY_HOPS }, "Express proxy trust configured");
   app.use(
     "/webhooks",
     createIpRateLimiter({
@@ -202,6 +229,25 @@ async function main() {
       }
     })
   );
+
+  let dbMaintenanceInterval: ReturnType<typeof setInterval> | null = null;
+  if (env.ENABLE_DB_MAINTENANCE) {
+    dbMaintenanceInterval = setInterval(() => {
+      try {
+        runDbMaintenancePass("interval");
+      } catch (err) {
+        logger.error({ err }, "DB maintenance interval pass failed");
+      }
+    }, env.DB_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000);
+    dbMaintenanceInterval.unref?.();
+    logger.info(
+      {
+        intervalMinutes: env.DB_MAINTENANCE_INTERVAL_MINUTES,
+        webhookEventsRetentionDays: env.WEBHOOK_EVENTS_RETENTION_DAYS
+      },
+      "DB maintenance scheduler enabled"
+    );
+  }
 
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, "HTTP server listening");
@@ -232,6 +278,11 @@ async function main() {
 
   let shutdown = (signal: string) => {
     logger.warn({ signal }, "Shutting down...");
+    if (dbMaintenanceInterval) {
+      clearInterval(dbMaintenanceInterval);
+      dbMaintenanceInterval = null;
+      logger.info("DB maintenance scheduler deactivated");
+    }
     bot.stop(signal);
     server.close(() => process.exit(0));
   };

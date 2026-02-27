@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at INTEGER NOT NULL
 );
 
+-- Tracks applied schema migrations so upgrades are repeatable and idempotent.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+
 -- Webhook events table provides idempotency + audit trail.
 CREATE TABLE IF NOT EXISTS webhook_events (
   provider TEXT NOT NULL,
@@ -39,4 +45,13 @@ CREATE TABLE IF NOT EXISTS checkout_tokens (
   created_at INTEGER NOT NULL,
   CONSTRAINT fk_checkout_tokens_user FOREIGN KEY (telegram_user_id) REFERENCES users (telegram_user_id) ON DELETE CASCADE
 );
+
+-- Secondary indexes for webhook retention, lookups, and maintenance jobs.
+CREATE INDEX IF NOT EXISTS idx_webhook_events_received_at ON webhook_events (received_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_telegram_user_received_at ON webhook_events (telegram_user_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_event_type_received_at ON webhook_events (event_type, received_at);
+CREATE INDEX IF NOT EXISTS idx_checkout_tokens_expires_at ON checkout_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS idx_users_ghl_contact_id ON users (ghl_contact_id);
+CREATE INDEX IF NOT EXISTS idx_users_state ON users (state);
+CREATE INDEX IF NOT EXISTS idx_telegram_audio_cache_updated_at ON telegram_audio_cache (updated_at);
 `;

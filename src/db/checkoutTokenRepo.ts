@@ -50,3 +50,14 @@ export function deleteCheckoutTokensForUser(db: DbLike, telegramUserId: number) 
   db.prepare("DELETE FROM checkout_tokens WHERE telegram_user_id = ?").run(telegramUserId);
 }
 
+export function deleteExpiredCheckoutTokens(db: DbLike, nowMs = Date.now()): number {
+  const result = db.prepare("DELETE FROM checkout_tokens WHERE expires_at < ?").run(nowMs) as { changes?: number };
+  return Number(result?.changes ?? 0);
+}
+
+export function countExpiredCheckoutTokens(db: DbLike, nowMs = Date.now()): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM checkout_tokens WHERE expires_at < ?").get(nowMs) as
+    | { count: number }
+    | undefined;
+  return Number(row?.count ?? 0);
+}

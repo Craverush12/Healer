@@ -10,6 +10,14 @@ const EnvSchema = z.object({
   BOT_TOKEN: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(3000),
   DB_PATH: z.string().min(1).default("./data/bot.sqlite"),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+  ENABLE_DB_MAINTENANCE: z
+    .string()
+    .optional()
+    .transform(toBooleanFlag)
+    .default(() => false),
+  DB_MAINTENANCE_INTERVAL_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(60),
+  WEBHOOK_EVENTS_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
 
   // Feature flag: set to "true" to enable payment/subscription features
   ENABLE_PAYMENTS: z
@@ -82,6 +90,13 @@ export function loadEnv(raw: NodeJS.ProcessEnv): Env {
 
   const env = parsed.data;
   const nodeEnv = String(raw.NODE_ENV ?? "").trim().toLowerCase();
+
+  if (nodeEnv === "production" && env.TRUST_PROXY_HOPS === 0) {
+    // This is a warning condition rather than a hard failure because some dedicated server setups
+    // terminate TLS directly in-process and do not need proxy trust enabled.
+    // eslint-disable-next-line no-console
+    console.warn("TRUST_PROXY_HOPS=0 in production; set this explicitly if running behind a reverse proxy.");
+  }
 
   // Validate payment-related config only if payments are enabled
   if (env.ENABLE_PAYMENTS) {
