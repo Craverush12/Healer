@@ -58,6 +58,7 @@
       "categoryId": "daily-meditations",
       "filePath": "DAILY_GUIDED_MEDITATIONS/Meditation_15_Minutes.mp3",
       "googleDriveUrl": "https://drive.google.com/uc?id=1q2bBH0lAL_QbSSWJYD07ooONlWGUWR4H&export=download",
+      "remoteUrl": "https://healer-telegram-bot-prod-us-east-1.s3.amazonaws.com/Healer/DAILY_GUIDED_MEDITATIONS/Meditation_15_Minutes.mp3",
       "description": "The best guided meditation to start and even useful for experienced meditators. Teaches core techniques to get out of your head, while explaining the practice of meditation. Start here. You can just do this same meditation for 6+ months.",
       "duration": "15 min",
       "recommended": true,
@@ -70,6 +71,7 @@
       "categoryId": "daily-meditations",
       "filePath": "DAILY_GUIDED_MEDITATIONS/20_Min_Meditation_for_Mindfulness.mp3",
       "googleDriveUrl": "https://drive.google.com/uc?id=144TnHFkZqZ56JdEPwY70laqpxggz0KBC&export=download",
+      "remoteUrl": "https://healer-telegram-bot-prod-us-east-1.s3.amazonaws.com/Healer/DAILY_GUIDED_MEDITATIONS/20_Min_Meditation_for_Mindfulness.mp3",
       "description": "This meditation teaches some different techniques to get into the meditative state. You can use vary between this one and the previous guided meditation for the first months of your meditative journey.",
       "duration": "20 min",
       "whenToUse": ["morning", "evening"],
@@ -81,6 +83,7 @@
       "categoryId": "sleep-meditations",
       "filePath": "SLEEP_MEDITATION/15_Min_Guided_Meditation_for_Falling_Asleep.mp3",
       "googleDriveUrl": "https://drive.google.com/uc?id=1p_Xgl-zD25vM8n2ziyd5H6HgkzeDuHFO&export=download",
+      "remoteUrl": "https://healer-telegram-bot-prod-us-east-1.s3.amazonaws.com/Healer/SLEEP_MEDITATION/15_Min_Guided_Meditation_for_Falling_Asleep.mp3",
       "description": "Guided meditation specifically designed to help you fall asleep",
       "duration": "15 min",
       "whenToUse": ["sleep"]
@@ -101,6 +104,7 @@
       "categoryId": "focus-music",
       "filePath": "FOCUS_MUSIC/alima_frequency.mp3",
       "googleDriveUrl": "https://drive.google.com/uc?id=1ZxIoOSmVOUbdT76cQ-MdtXYsoGhUdlDW&export=download",
+      "remoteUrl": "https://healer-telegram-bot-prod-us-east-1.s3.amazonaws.com/Healer/FOCUS_MUSIC/alima_frequency.mp3",
       "description": "Frequency-based music for deep focus",
       "whenToUse": ["focus", "meditation"]
     }
